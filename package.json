@@ -1,0 +1,17 @@
+{
+  "name": "photo-hunt",
+  "version": "1.0.0",
+  "description": "",
+  "scripts": {
+    "dev": "wrangler dev --ip 0.0.0.0",
+    "deploy": "wrangler deploy",
+    "db:local": "wrangler d1 execute photo-hunt-db --local --file=schema.sql",
+    "db:remote": "wrangler d1 execute photo-hunt-db --remote --file=schema.sql"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "wrangler": "^4.158.0"
+  }
+}

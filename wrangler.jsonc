@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "photo-hunt",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-11-01",
+  "assets": { "directory": "./public", "run_worker_first": ["/api/*", "/img/*"] },
+  "d1_databases": [
+    { "binding": "DB", "database_name": "photo-hunt-db", "database_id": "7270517a-1ac9-40fa-b95a-fb5bffd39025" }
+  ],
+  // Photos live in KV for now. Swap to R2 later (see PLAN.md).
+  "kv_namespaces": [
+    { "binding": "PHOTOS", "id": "8f763f95c2fd454388bd353530ccc0f7" }
+  ],
+  "observability": { "enabled": true }
+}
