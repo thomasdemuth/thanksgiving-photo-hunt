@@ -5,6 +5,9 @@ const DEFAULT_TEAMS = [
   ['Red', '#d62828'], ['Blue', '#1d4ed8'], ['Green', '#15803d'], ['Gold', '#b45309'],
 ];
 const POINTS = { 1: 1, 2: 2, 3: 3 };
+// Default play area: Canal St (6th Ave to Greenwich), Greenwich St (Canal to Christopher),
+// Christopher St (Greenwich to 6th Ave), 6th Ave (Christopher to Canal). Traced from OpenStreetMap.
+const DEFAULT_BOUNDARY = [[40.721882,-74.005355],[40.723845,-74.008033],[40.724026,-74.008445],[40.724495,-74.008916],[40.724597,-74.00921],[40.724722,-74.009309],[40.726,-74.0091],[40.7296,-74.0084],[40.732877,-74.007514],[40.734146,-73.999182],[40.729621,-74.002232],[40.72212,-74.005379]];
 const STATE_TTL_MS = 5000;
 const PING_EVERY_MS = 25000;
 
@@ -86,17 +89,20 @@ async function gameState(env, game) {
     env.DB.prepare(`SELECT f.id, f.photo_id, f.team_id, f.status, f.lat, f.lng, f.created_at, p.name AS player_name
                     FROM finds f LEFT JOIN players p ON p.id = f.player_id
                     WHERE f.game_id = ? AND f.status != 'rejected' ORDER BY f.created_at`).bind(game.id),
-    env.DB.prepare('SELECT team_id, COUNT(*) AS n FROM players WHERE game_id = ? GROUP BY team_id').bind(game.id),
+    env.DB.prepare('SELECT team_id, name FROM players WHERE game_id = ? ORDER BY created_at').bind(game.id),
   ]);
   const pts = Object.fromEntries(photos.results.map((p) => [p.id, p.points]));
-  const counts = Object.fromEntries(players.results.map((r) => [r.team_id, r.n]));
+  const diff = Object.fromEntries(photos.results.map((p) => [p.id, p.difficulty]));
   const scored = teams.results.map((t) => {
     const mine = finds.results.filter((f) => f.team_id === t.id && (f.status === 'auto' || f.status === 'approved'));
     return {
       ...t,
-      players: counts[t.id] || 0,
+      members: players.results.filter((p) => p.team_id === t.id).map((p) => p.name),
+      players: players.results.filter((p) => p.team_id === t.id).length,
       score: mine.reduce((s, f) => s + (pts[f.photo_id] || 0), 0),
       found: mine.length,
+      // Found counts by difficulty: [easy, medium, hard].
+      by_diff: [1, 2, 3].map((d) => mine.filter((f) => diff[f.photo_id] === d).length),
       // Tie-break: whoever reached their score first.
       reached_at: mine.length ? Math.max(...mine.map((f) => f.created_at)) : 0,
     };
@@ -134,7 +140,7 @@ async function player(request, env, url) {
     const game = await currentGame(env);
     if (!game) return json({ game: null });
     const s = await gameState(env, game);
-    return json({ game: s.game, teams: s.teams.map(({ id, name, color, players }) => ({ id, name, color, players })) });
+    return json({ game: s.game, teams: s.teams.map(({ id, name, color, players, members }) => ({ id, name, color, players, members })) });
   }
 
   // Look for players with this name, for "Is this you, Mike on Blue team?"
@@ -254,7 +260,9 @@ async function admin(request, env, url) {
     if (prev) {
       stmts.push(env.DB.prepare(`INSERT INTO photos (id, game_id, title, difficulty, points, lat, lng, radius_m, hint, image_key, thumb_key, sort)
         SELECT lower(hex(randomblob(8))), ?, title, difficulty, points, lat, lng, radius_m, hint, image_key, thumb_key, sort FROM photos WHERE game_id = ?`).bind(g.id, prev.id));
-      stmts.push(env.DB.prepare('UPDATE games SET boundary_geojson = ? WHERE id = ?').bind(prev.boundary_geojson, g.id));
+      stmts.push(env.DB.prepare('UPDATE games SET boundary_geojson = ? WHERE id = ?').bind(prev.boundary_geojson || JSON.stringify(DEFAULT_BOUNDARY), g.id));
+    } else {
+      stmts.push(env.DB.prepare('UPDATE games SET boundary_geojson = ? WHERE id = ?').bind(JSON.stringify(DEFAULT_BOUNDARY), g.id));
     }
     await env.DB.batch(stmts);
     return json({ ok: true, id: g.id });
@@ -282,7 +290,7 @@ async function admin(request, env, url) {
     const b = await request.json();
     const sets = [], vals = [];
     if (b.name !== undefined) { sets.push('name = ?'); vals.push(String(b.name).slice(0, 60)); }
-    if (b.boundary !== undefined) { sets.push('boundary_geojson = ?'); vals.push(b.boundary ? JSON.stringify(b.boundary) : null); }
+    if (b.boundary !== undefined) { sets.push('boundary_geojson = ?'); vals.push(b.boundary ? JSON.stringify(b.boundary === 'default' ? DEFAULT_BOUNDARY : b.boundary) : null); }
     if (b.action === 'start') { sets.push("status = 'live'", 'started_at = ?', 'ends_at = ?'); vals.push(now(), b.minutes ? now() + b.minutes * 60000 : null); }
     if (b.action === 'end') { sets.push("status = 'ended'", 'ends_at = ?'); vals.push(now()); }
     if (b.action === 'reopen') { sets.push("status = 'live'", 'ends_at = NULL'); }
