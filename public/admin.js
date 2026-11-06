@@ -1,7 +1,8 @@
 // Admin page: photos & teams, map (pins, play area), live game (judge, feed, players), results.
 (() => {
   const DIFF = { 1: 'Easy', 2: 'Medium', 3: 'Hard' };
-  const DIFF_COLOR = { 1: '#2f855a', 2: '#d69e2e', 3: '#c53030' };
+  const DIFF_COLOR = { 1: '#00933c', 2: '#fccc0a', 3: '#ee352e' };
+  const diffTag = (d) => `<span class="diff"><span class="bullet d${d}">${'EMH'[d - 1]}</span>${DIFF[d]}</span>`;
   const TILES = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
   const TILE_ATTR = '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
   const TABS = { setup: 'Photos & teams', map: 'Map', live: 'Live game', results: 'Results' };
@@ -26,8 +27,7 @@
   function login(err) {
     $('#app').innerHTML = `
       <div class="login card stack">
-        <div class="center" style="font-size:3em">🦃</div>
-        <h1 class="center">Photo Hunt Admin</h1>
+        <h1 class="center">🦃 Photo Hunt Admin</h1>
         <form id="lf" class="stack"><label for="pw">Password</label><input id="pw" type="password" autocomplete="current-password" required autofocus>
         <button class="btn-primary btn-big">Sign in</button></form>
         <p class="error center">${esc(err || '')}</p>
@@ -52,7 +52,10 @@
     document.querySelectorAll('[data-tab]').forEach((b) => b.onclick = () => show(b.dataset.tab));
     await refresh();
     show(A.d?.game?.status === 'live' ? 'live' : 'setup');
-    setInterval(() => { if ((A.tab === 'live' || A.tab === 'results') && !document.hidden) refresh().then(() => render()); }, 5000);
+    // One refresh loop for the whole page; it pauses while signed out.
+    if (!A.timer) A.timer = setInterval(() => {
+      if (A.pw && A.d?.game && (A.tab === 'live' || A.tab === 'results') && !document.hidden) refresh().then(() => render()).catch(() => {});
+    }, 5000);
   }
 
   async function refresh() { A.d = await api('/state'); renderStatus(); }
@@ -93,10 +96,10 @@
   }
   function drawArea(layer, b, opts = {}) {
     if (!b) return;
-    L.polygon([[[-85, -180], [-85, 180], [85, 180], [85, -180]], b], { stroke: false, fillColor: '#2a211c', fillOpacity: 0.3, interactive: false }).addTo(layer);
-    L.polygon(b, { color: '#a63a2b', weight: 3, fill: false, interactive: false, ...opts }).addTo(layer);
+    L.polygon([[[-85, -180], [-85, 180], [85, 180], [85, -180]], b], { stroke: false, fillColor: '#000', fillOpacity: 0.3, interactive: false }).addTo(layer);
+    L.polygon(b, { color: '#e8590c', weight: 4, fill: false, interactive: false, ...opts }).addTo(layer);
   }
-  const numIcon = (n, d, sel) => L.divIcon({ className: '', html: `<div class="num-pin ${sel ? 'sel' : ''}" style="background:${DIFF_COLOR[d]}">${n}</div>`, iconSize: [26, 26] });
+  const numIcon = (n, d, sel) => L.divIcon({ className: '', html: `<div class="num-pin d${d} ${sel ? 'sel' : ''}" style="background:${DIFF_COLOR[d]}">${n}</div>`, iconSize: [24, 24] });
 
   // ---------- setup ----------
   function renderSetup() {
@@ -118,7 +121,7 @@
             <h2>Teams <span class="count">${teams.length}</span></h2>
             ${teams.map((t) => {
               const ms = players.filter((p) => p.team_id === t.id);
-              return `<div class="team-row"><input type="color" value="${esc(t.color)}" data-tcolor="${t.id}"><input class="grow" value="${esc(t.name)}" data-tname="${t.id}"><button class="icon-del" data-tdel="${t.id}" title="Remove team">✕</button></div>
+              return `<div class="team-row"><input type="color" value="${esc(t.color)}" data-tcolor="${t.id}"><input class="grow" value="${esc(t.name)}" data-tname="${t.id}"><button class="x-btn" data-tdel="${t.id}" title="Remove team">✕</button></div>
                 ${ms.length ? `<p class="small muted" style="margin:-.2em 0 .6em 48px">${ms.map((p) => esc(p.name)).join(', ')}</p>` : ''}`;
             }).join('')}
             <button class="btn-small" id="addTeam">+ Add team</button>
@@ -127,7 +130,7 @@
         <div class="card stack">
           <h2>Photos <span class="count">${photos.length}</span>
             <span class="grow"></span>
-            <span class="small muted" style="font-weight:500">${counts[0]} easy · ${counts[1]} medium · ${counts[2]} hard</span></h2>
+            <span class="small muted" style="font-weight:400">${counts[0]} easy · ${counts[1]} medium · ${counts[2]} hard</span></h2>
           <div class="drop" id="drop">
             <b>Drag photos here</b> or <label class="btn btn-primary btn-small" style="display:inline-flex;margin:0 .3em">Choose photos<input type="file" id="files" accept="image/*" multiple class="hidden"></label>
             <p class="small muted" style="margin:.5em 0 0">Use the original photos so their location comes along. Each one gets pinned on the map automatically.</p>
@@ -167,7 +170,7 @@
       </div>
       <div class="pact">
         <button class="btn pin-btn ${p.lat == null ? 'need' : ''}" data-place="${p.id}">${p.lat == null ? '📍 Place pin' : '✓ On map'}</button>
-        <button class="icon-del" data-pdel="${p.id}" title="Delete photo">✕</button>
+        <button class="x-btn" data-pdel="${p.id}" title="Delete photo">✕</button>
       </div>
     </div>`;
   }
@@ -177,7 +180,8 @@
       const pid = row.dataset.row;
       row.querySelectorAll('[data-f]').forEach((inp) => inp.onchange = async () => {
         const f = inp.dataset.f;
-        await api('/photos/' + pid, 'PATCH', { [f]: ['points', 'radius_m'].includes(f) ? Number(inp.value) : inp.value });
+        // The server checks the value; if it says no, put the old value back.
+        try { await api('/photos/' + pid, 'PATCH', { [f]: inp.value }); } catch { inp.value = A.d.photos.find((p) => p.id === pid)?.[f] ?? ''; return; }
         await refresh();
       });
       row.querySelectorAll('[data-d]').forEach((b) => b.onclick = async () => {
@@ -237,7 +241,7 @@
               <button class="btn-small" id="drawBtn">✏️ Redraw play area</button>
               <button class="btn-small" id="defaultBtn" title="Canal, Greenwich, Christopher, 6th Ave">Reset area</button>
             </div>
-            <div class="filter-chips" id="chips"></div>
+            <div class="filters" id="chips"></div>
           </div>
           <div class="side-list" id="sideList"></div>
         </div>
@@ -275,7 +279,7 @@
   function drawArea2() {
     A.areaLayer.clearLayers();
     if (A.drawing) {
-      if (A.drawing.length) { L.polyline(A.drawing, { color: '#a63a2b', weight: 3, dashArray: '6 6' }).addTo(A.areaLayer); A.drawing.forEach((p) => L.circleMarker(p, { radius: 6, color: '#a63a2b', fillColor: '#fff', fillOpacity: 1 }).addTo(A.areaLayer)); }
+      if (A.drawing.length) { L.polyline(A.drawing, { color: '#e8590c', weight: 3, dashArray: '6 6' }).addTo(A.areaLayer); A.drawing.forEach((p) => L.circleMarker(p, { radius: 6, color: '#e8590c', fillColor: '#fff', fillOpacity: 1 }).addTo(A.areaLayer)); }
     } else drawArea(A.areaLayer, A.d.game.boundary);
   }
 
@@ -322,7 +326,7 @@
     $('#sideList').innerHTML = ps.map((p, i) => visible(p) ? `
       <div class="side-item ${A.sel === p.id ? 'sel' : ''}" data-item="${p.id}">
         <img src="/img/${esc(p.thumb_key)}" loading="lazy" alt="">
-        <span class="t"><b>#${i + 1}</b> ${esc(p.title || '')}<br><span class="small muted"><span class="dot" style="background:${DIFF_COLOR[p.difficulty]}"></span> ${DIFF[p.difficulty]} · ${p.points} pt</span></span>
+        <span class="t"><b>#${i + 1}</b> ${esc(p.title || '')}<br><span class="small">${diffTag(p.difficulty)} · ${p.points} pt</span></span>
         ${p.lat == null ? `<button class="btn pin-btn need" data-place2="${p.id}">Place</button>` : ''}
       </div>` : '').join('') || '<p class="muted center small" style="padding:1em">No photos here.</p>';
     document.querySelectorAll('[data-item]').forEach((el) => el.onclick = (e) => { if (!e.target.closest('[data-place2]')) select(el.dataset.item, true); });
@@ -366,9 +370,9 @@
   function scoreTiles() {
     return `<div class="tiles">${A.d.scores.map((t, i) => `
       <div class="stat" style="--c:${esc(t.color)}">
-        <div class="row" style="justify-content:space-between"><b>${esc(t.name)}</b><span class="small muted">${i + 1}${['st', 'nd', 'rd'][i] || 'th'}</span></div>
-        <div class="v">${t.score}</div>
-        <div class="k">${t.found} found · <span style="color:${DIFF_COLOR[1]}">${t.by_diff[0]}</span> / <span style="color:${DIFF_COLOR[2]}">${t.by_diff[1]}</span> / <span style="color:${DIFF_COLOR[3]}">${t.by_diff[2]}</span></div>
+        <div class="row" style="justify-content:space-between"><b>${i + 1}. ${esc(t.name)}</b><span class="small muted">${t.players} players</span></div>
+        <div class="v">${t.score} <span class="small muted" style="font-weight:400">pts</span></div>
+        <div class="counts">${[1, 2, 3].map((d) => `<span><span class="bullet d${d}">${'EMH'[d - 1]}</span>${t.by_diff[d - 1]}</span>`).join('')}<span class="muted">${t.found} found</span></div>
       </div>`).join('')}</div>`;
   }
 
@@ -398,12 +402,14 @@
     }
     const { game, players, finds, teams, photos } = A.d;
     const busy = document.activeElement && ['SELECT', 'INPUT'].includes(document.activeElement.tagName);
+    // Only redraw a section when its content changed, so buttons don't move under the mouse.
+    const changed = (key, val) => { if (!full && A.sig?.[key] === val) return false; (A.sig ||= {})[key] = val; return true; };
     $('#tiles').innerHTML = scoreTiles();
 
-    if (!busy || full) {
+    if (changed('controls', game.status + '|' + game.ends_at)) {
       $('#controls').innerHTML = game.status === 'setup' ? `
         <h2>Ready to start?</h2>
-        <p class="small muted" style="margin:0">${photos.length} photos · ${players.length} players joined. Scan the code to join.</p>
+        <p class="small muted" style="margin:0"><span id="joinedLine"></span> Scan the code to join.</p>
         <div><label for="mins" class="small">Game length in minutes (optional)</label><input id="mins" type="number" min="5" placeholder="No timer"></div>
         <button class="btn-ok btn-big" id="startBtn">▶ Start the game</button>`
         : game.status === 'live' ? `
@@ -411,51 +417,67 @@
         <p class="small muted" style="margin:0">${game.ends_at ? `Ends at ${new Date(game.ends_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.` : 'No timer. End it when everyone is back.'}</p>
         <button class="btn-big btn-bad" id="endBtn">■ End the game</button>`
         : `<h2>The game is over</h2><div class="row"><button id="reopenBtn">Reopen</button><button id="setupBtn">Back to not started</button></div>`;
-      const sb = $('#startBtn'); if (sb) sb.onclick = async () => { if (!confirm('Start the game now?')) return; await api('/game', 'PATCH', { action: 'start', minutes: Number($('#mins').value) || null }); await refresh(); render(); };
-      const eb = $('#endBtn'); if (eb) eb.onclick = async () => { if (!confirm('End the game for everyone?')) return; await api('/game', 'PATCH', { action: 'end' }); await refresh(); show('results'); };
-      const rb = $('#reopenBtn'); if (rb) rb.onclick = async () => { await api('/game', 'PATCH', { action: 'reopen' }); await refresh(); render(); };
-      const ub = $('#setupBtn'); if (ub) ub.onclick = async () => { await api('/game', 'PATCH', { action: 'setup' }); await refresh(); render(); };
+      const act = (btn, body, ask, after) => btn && (btn.onclick = async () => {
+        if (ask && !confirm(ask)) return;
+        btn.disabled = true;
+        try { await api('/game', 'PATCH', body()); await refresh(); } finally { btn.disabled = false; }
+        after ? after() : render();
+      });
+      act($('#startBtn'), () => ({ action: 'start', minutes: Number($('#mins').value) || null }), 'Start the game now?');
+      act($('#endBtn'), () => ({ action: 'end' }), 'End the game for everyone?', () => show('results'));
+      act($('#reopenBtn'), () => ({ action: 'reopen' }));
+      act($('#setupBtn'), () => ({ action: 'setup' }), 'Go back to "not started"? Finds stay, but the timer resets.');
     }
+    const jl = $('#joinedLine'); if (jl) jl.textContent = `${photos.length} photos · ${players.length} players joined.`;
 
     // Judge queue
     const pending = finds.filter((f) => f.status === 'pending');
     $('#jCount').textContent = pending.length; $('#jCount').classList.toggle('hot', pending.length > 0);
-    $('#judge').innerHTML = pending.length ? pending.map((f) => {
+    if (changed('judge', pending.map((f) => f.id).join())) $('#judge').innerHTML = pending.length ? pending.map((f) => {
       const p = photoOf(f.photo_id), t = teamOf(f.team_id), pl = playerOf(f.player_id);
       return `<div class="judge-item">
         <div class="judge-pics"><figure><img src="/img/${esc(p?.thumb_key)}"><figcaption>#${numOf(f.photo_id)} · the photo</figcaption></figure>
-          <figure>${f.proof_key ? `<a href="/img/${esc(f.proof_key)}" target="_blank"><img src="/img/${esc(f.proof_key)}"></a>` : '<div class="note info center" style="aspect-ratio:4/3;display:flex;align-items:center;justify-content:center">No picture</div>'}<figcaption>their picture</figcaption></figure></div>
+          <figure>${f.proof_key ? `<a href="/img/${esc(f.proof_key)}" target="_blank"><img src="/img/${esc(f.proof_key)}"></a>` : '<div class="nopic">No picture</div>'}<figcaption>their picture</figcaption></figure></div>
         <p class="small" style="margin:.2em 0 .5em"><span class="swatch" style="background:${esc(t.color)}"></span> <b>${esc(pl?.name || '?')}</b> (${esc(t.name)}) · ${Math.round(f.distance_m)} m from the spot · GPS ±${Math.round(f.accuracy_m || 0)} m</p>
         <div class="row"><button class="btn-ok grow" data-judge="${f.id}" data-s="approved">✓ Approve</button><button class="btn-bad grow" data-judge="${f.id}" data-s="rejected">✕ Reject</button></div></div>`;
     }).join('') : '<p class="muted small" style="margin:0">Nothing to judge right now.</p>';
-    document.querySelectorAll('[data-judge]').forEach((b) => b.onclick = async () => { b.disabled = true; await api('/finds/' + b.dataset.judge, 'PATCH', { status: b.dataset.s }); await refresh(); render(); });
+    document.querySelectorAll('[data-judge]').forEach((b) => b.onclick = async () => {
+      b.closest('.judge-item').querySelectorAll('button').forEach((x) => { x.disabled = true; });
+      try { await api('/finds/' + b.dataset.judge, 'PATCH', { status: b.dataset.s }); } finally { await refresh(); render(); }
+    });
 
     // Players + manual fixes
     $('#pCount').textContent = players.length;
-    if (!busy) {
+    if (!busy && changed('players', JSON.stringify(players.map((p) => [p.id, p.team_id, p.name, ago(p.last_seen_at)])) + teams.map((t) => t.id + t.name).join())) {
       $('#players').innerHTML = players.length ? teams.map((t) => {
         const ps = players.filter((p) => p.team_id === t.id);
-        return `<div style="margin-bottom:.8em"><div class="row small" style="font-weight:750;margin-bottom:.3em"><span class="swatch" style="background:${esc(t.color)}"></span>${esc(t.name)} <span class="muted" style="font-weight:500">${ps.length}</span></div>` + ps.map((p) => `
+        return `<div style="margin-bottom:.8em"><div class="row small" style="font-weight:700;margin-bottom:.3em"><span class="swatch" style="background:${esc(t.color)}"></span>${esc(t.name)} <span class="muted" style="font-weight:400">${ps.length}</span></div>` + ps.map((p) => `
           <div class="row" style="padding:.2em 0 .2em 1.4em"><span class="grow small">${esc(p.name)} <span class="muted">· ${ago(p.last_seen_at)}</span></span>
           <select data-move="${p.id}" style="width:auto;min-height:32px;font-size:.8em;padding:.1em .4em">${teams.map((tt) => `<option value="${tt.id}" ${tt.id === t.id ? 'selected' : ''}>${esc(tt.name)}</option>`).join('')}</select></div>`).join('') + '</div>';
       }).join('') : '<p class="muted small" style="margin:0">Nobody yet. Show the QR code.</p>';
       document.querySelectorAll('[data-move]').forEach((s) => s.onchange = async () => { await api('/players/' + s.dataset.move, 'PATCH', { team_id: s.value }); await refresh(); render(); });
-
+    }
+    // The hand-add panel is only rebuilt when teams or photos change, so it keeps what you picked.
+    if (changed('manual', teams.map((t) => t.id + t.name).join() + photos.map((p) => p.id + p.title).join())) {
       $('#manual').innerHTML = `<details style="margin-bottom:.5em"><summary class="small muted" style="cursor:pointer">Give a team a find by hand</summary><div class="row" style="margin:.5em 0">
         <select id="mTeam" style="width:auto">${teams.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select>
         <select id="mPhoto" style="width:auto">${photos.map((p, i) => `<option value="${p.id}">#${i + 1} ${esc(p.title || '')}</option>`).join('')}</select>
         <button class="btn-small" id="mAdd">Add</button></div></details>`;
-      $('#mAdd').onclick = async () => { await api('/finds', 'POST', { team_id: $('#mTeam').value, photo_id: $('#mPhoto').value }); await refresh(); render(); };
+      $('#mAdd').onclick = async () => {
+        const team = teamOf($('#mTeam').value), n = numOf($('#mPhoto').value);
+        if (!confirm(`Give ${team.name} team photo #${n}?`)) return;
+        await api('/finds', 'POST', { team_id: $('#mTeam').value, photo_id: $('#mPhoto').value }); await refresh(); render();
+      };
     }
 
     // Feed
-    $('#feed').innerHTML = finds.length ? finds.slice(0, 60).map((f) => {
+    if (changed('feed', finds.map((f) => f.id + f.status).join() + Math.floor(A.d.now / 60000))) $('#feed').innerHTML = finds.length ? finds.slice(0, 60).map((f) => {
       const p = photoOf(f.photo_id), t = teamOf(f.team_id), pl = playerOf(f.player_id);
       const label = { auto: 'Found', approved: 'Approved', pending: 'Waiting', rejected: 'Rejected' }[f.status];
       return `<div class="feed-item"><img src="/img/${esc(f.proof_key || p?.thumb_key)}" alt="" loading="lazy">
         <div class="grow small"><b>${esc(pl?.name || 'Judge')}</b> <span class="swatch" style="background:${esc(t.color)}"></span> ${esc(t.name)} · #${numOf(f.photo_id)} <span class="muted">(${DIFF[p?.difficulty] || ''})</span><br>
-        <span class="s s-${f.status}">${label}</span> <span class="muted">${f.distance_m != null ? Math.round(f.distance_m) + ' m · ' : ''}${ago(f.created_at)}</span></div>
-        <button class="icon-del" data-fdel="${f.id}" title="Remove this find">✕</button></div>`;
+        <span class="tag ${f.status}">${label}</span> <span class="muted">${f.distance_m != null ? Math.round(f.distance_m) + ' m · ' : ''}${ago(f.created_at)}</span></div>
+        <button class="x-btn" data-fdel="${f.id}" title="Remove this find">✕</button></div>`;
     }).join('') : '<p class="muted small" style="margin:0">No check-ins yet.</p>';
     document.querySelectorAll('[data-fdel]').forEach((b) => b.onclick = async () => { if (!confirm('Remove this find?')) return; await api('/finds/' + b.dataset.fdel, 'DELETE'); await refresh(); render(); });
 
@@ -481,7 +503,7 @@
     const winner = scores[0];
     const proofs = finds.filter((f) => f.proof_key && f.status !== 'rejected');
     $('#body').innerHTML = `
-      ${winner ? `<div class="winner" style="background:${esc(winner.color)}"><div style="font-size:3em">🏆</div><h1 style="margin:.1em 0">${esc(winner.name)} ${A.d.game.status === 'ended' ? 'wins!' : 'is in the lead'}</h1><p style="margin:0">${winner.score} points · ${winner.found} photos found</p></div>` : ''}
+      ${winner ? `<div class="winner" style="background:${esc(winner.color)}"><h1>🏆 ${esc(winner.name)} ${A.d.game.status === 'ended' ? 'wins!' : 'is in the lead'}</h1><p style="margin:0">${winner.score} points · ${winner.found} photos found</p></div>` : ''}
       <div class="row" style="margin-bottom:1em"><button class="btn-primary" id="winBtn">🏆 Show winner on TV</button><button id="csvBtn">⬇ Download results (CSV)</button></div>
       ${scoreTiles()}
       <div class="card"><h2>Proof photos <span class="count">${proofs.length}</span></h2><div class="gallery">${proofs.map((f) => { const t = teamOf(f.team_id); return `<figure><a href="/img/${esc(f.proof_key)}" target="_blank"><img src="/img/${esc(f.proof_key)}" loading="lazy"></a><figcaption><span class="swatch" style="background:${esc(t.color)}"></span> ${esc(playerOf(f.player_id)?.name || '')} · #${numOf(f.photo_id)}</figcaption></figure>`; }).join('') || '<p class="muted small">None yet.</p>'}</div></div>`;

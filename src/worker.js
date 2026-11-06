@@ -2,7 +2,7 @@
 // Static files in /public are served by Cloudflare before this runs.
 
 const DEFAULT_TEAMS = [
-  ['Red', '#d62828'], ['Blue', '#1d4ed8'], ['Green', '#15803d'], ['Gold', '#b45309'],
+  ['Red', '#ee352e'], ['Blue', '#0039a6'], ['Green', '#00933c'], ['Orange', '#e8590c'],
 ];
 const POINTS = { 1: 1, 2: 2, 3: 3 };
 // Default play area: Canal St (6th Ave to Greenwich), Greenwich St (Canal to Christopher),
@@ -94,7 +94,13 @@ async function gameState(env, game) {
   const pts = Object.fromEntries(photos.results.map((p) => [p.id, p.points]));
   const diff = Object.fromEntries(photos.results.map((p) => [p.id, p.difficulty]));
   const scored = teams.results.map((t) => {
-    const mine = finds.results.filter((f) => f.team_id === t.id && (f.status === 'auto' || f.status === 'approved'));
+    // Each photo counts once per team, even if two rows slipped in (finds are sorted oldest first).
+    const seen = new Set();
+    const mine = finds.results.filter((f) => {
+      if (f.team_id !== t.id || (f.status !== 'auto' && f.status !== 'approved') || seen.has(f.photo_id)) return false;
+      seen.add(f.photo_id);
+      return true;
+    });
     return {
       ...t,
       members: players.results.filter((p) => p.team_id === t.id).map((p) => p.name),
@@ -184,13 +190,14 @@ async function player(request, env, url) {
     const game = await currentGame(env);
     if (!game || game.id !== me.game_id) return json({ error: 'not_joined' }, 401);
     const body = await request.json().catch(() => ({}));
-    if (typeof body.lat === 'number' && typeof body.lng === 'number' && (!me.last_seen_at || now() - me.last_seen_at > PING_EVERY_MS)) {
-      await env.DB.batch([
+    if (!me.last_seen_at || now() - me.last_seen_at > PING_EVERY_MS) {
+      const hasLoc = Number.isFinite(body.lat) && Number.isFinite(body.lng);
+      await env.DB.batch(hasLoc ? [
         env.DB.prepare('UPDATE players SET last_lat = ?, last_lng = ?, last_accuracy = ?, last_seen_at = ? WHERE id = ?')
-          .bind(body.lat, body.lng, body.acc ?? null, now(), me.id),
+          .bind(body.lat, body.lng, Number.isFinite(body.acc) ? body.acc : null, now(), me.id),
         env.DB.prepare('INSERT INTO pings (player_id, game_id, lat, lng, at) VALUES (?, ?, ?, ?, ?)')
           .bind(me.id, game.id, body.lat, body.lng, now()),
-      ]);
+      ] : [env.DB.prepare('UPDATE players SET last_seen_at = ? WHERE id = ?').bind(now(), me.id)]);
     }
     const s = await gameState(env, game);
     // Other teams' check-in spots would give away photo locations, so strip them.
@@ -212,7 +219,10 @@ async function player(request, env, url) {
     if (!game || game.id !== me.game_id) return json({ error: 'not_joined' }, 401);
     const status = effectiveStatus(game);
     if (status === 'setup') return json({ result: 'not_started' });
-    if (status === 'ended') return json({ result: 'ended' });
+    // A check-in saved offline before the end still counts if it arrives within 30 minutes.
+    const takenAt = Number(form.get('at')) || now();
+    const lateOk = game.ends_at && takenAt <= game.ends_at && takenAt >= (game.started_at || 0) && now() - game.ends_at < 30 * 60000;
+    if (status === 'ended' && !lateOk) return json({ result: 'ended' });
 
     const photo = await env.DB.prepare('SELECT * FROM photos WHERE id = ? AND game_id = ?').bind(photoId, game.id).first();
     if (!photo) return json({ error: 'That photo is no longer in the game.' }, 404);
@@ -228,12 +238,17 @@ async function player(request, env, url) {
     let result;
     if (distance <= photo.radius_m) result = 'auto';
     else if (distance <= photo.radius_m * 2 || askJudge) result = 'pending';
-    else return json({ result: 'far', distance });
+    // Rounded so a far answer can't be used to triangulate the spot.
+    else return json({ result: 'far', distance: Math.max(100, Math.round(distance / 50) * 50) });
 
     const proofKey = await putImage(env, form.get('proof'), 'proof');
-    await env.DB.prepare(
-      'INSERT INTO finds (id, game_id, photo_id, team_id, player_id, lat, lng, accuracy_m, distance_m, proof_key, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-    ).bind(id(), game.id, photo.id, me.team_id, me.id, lat, lng, acc, distance, proofKey, result, now()).run();
+    // Insert only if the team has no counted or pending find for this photo (guards against two teammates tapping at once).
+    const ins = await env.DB.prepare(
+      `INSERT INTO finds (id, game_id, photo_id, team_id, player_id, lat, lng, accuracy_m, distance_m, proof_key, status, created_at)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+       WHERE NOT EXISTS (SELECT 1 FROM finds WHERE team_id = ? AND photo_id = ? AND status IN ('auto','approved','pending'))`
+    ).bind(id(), game.id, photo.id, me.team_id, me.id, lat, lng, acc, distance, proofKey, result, Math.min(takenAt, now()), me.team_id, photo.id).run();
+    if (!ins.meta.changes) return json({ result: 'already' });
     bust(game.id);
     return json({ result, distance, points: photo.points });
   }
@@ -255,7 +270,10 @@ async function admin(request, env, url) {
     const g = { id: id(), name: String(name || 'Thanksgiving Photo Hunt').slice(0, 60) };
     const prev = await currentGame(env);
     const stmts = [env.DB.prepare('INSERT INTO games (id, name, status, created_at) VALUES (?, ?, ?, ?)').bind(g.id, g.name, 'setup', now())];
-    DEFAULT_TEAMS.forEach(([n, c]) => stmts.push(env.DB.prepare('INSERT INTO teams (id, game_id, name, color) VALUES (?, ?, ?, ?)').bind(id(), g.id, n, c)));
+    // Keep the previous game's teams (names and colors); otherwise use the defaults.
+    const prevTeams = prev ? (await env.DB.prepare('SELECT name, color FROM teams WHERE game_id = ? ORDER BY rowid').bind(prev.id).all()).results : [];
+    (prevTeams.length ? prevTeams.map((t) => [t.name, t.color]) : DEFAULT_TEAMS)
+      .forEach(([n, c]) => stmts.push(env.DB.prepare('INSERT INTO teams (id, game_id, name, color) VALUES (?, ?, ?, ?)').bind(id(), g.id, n, c)));
     // Carry photos and the boundary over so a fresh game doesn't mean re-uploading.
     if (prev) {
       stmts.push(env.DB.prepare(`INSERT INTO photos (id, game_id, title, difficulty, points, lat, lng, radius_m, hint, image_key, thumb_key, sort)
@@ -278,6 +296,7 @@ async function admin(request, env, url) {
       env.DB.prepare('SELECT id, team_id, name, last_lat, last_lng, last_accuracy, last_seen_at FROM players WHERE game_id = ? ORDER BY created_at').bind(game.id),
       env.DB.prepare('SELECT * FROM finds WHERE game_id = ? ORDER BY created_at DESC').bind(game.id),
     ]);
+    bust(game.id); // admin always sees fresh scores
     const s = await gameState(env, game);
     return json({
       game: { ...game, status: effectiveStatus(game), boundary: game.boundary_geojson ? JSON.parse(game.boundary_geojson) : null },
@@ -335,9 +354,23 @@ async function admin(request, env, url) {
     }
     if (method === 'PATCH') {
       const b = await request.json();
-      const fields = ['title', 'difficulty', 'points', 'lat', 'lng', 'radius_m', 'hint'];
       const sets = [], vals = [];
-      for (const f of fields) if (b[f] !== undefined) { sets.push(`${f} = ?`); vals.push(b[f] === '' ? null : b[f]); }
+      const int = (v, lo, hi) => { if (v === '' || v === null) return null; const n = Math.round(Number(v)); return Number.isFinite(n) && n >= lo && n <= hi ? n : null; };
+      const clean = {
+        title: (v) => String(v ?? '').trim().slice(0, 80) || null,
+        hint: (v) => String(v ?? '').trim().slice(0, 200) || null,
+        difficulty: (v) => int(v, 1, 3),
+        points: (v) => int(v, 0, 100),
+        radius_m: (v) => int(v, 5, 500),
+        lat: (v) => (v === null ? null : Number.isFinite(Number(v)) ? Number(v) : undefined),
+        lng: (v) => (v === null ? null : Number.isFinite(Number(v)) ? Number(v) : undefined),
+      };
+      for (const f of Object.keys(clean)) {
+        if (b[f] === undefined) continue;
+        const v = clean[f](b[f]);
+        if (v === undefined || (v === null && ['difficulty', 'points', 'radius_m'].includes(f))) return json({ error: `That ${f.replace('_m', '')} value doesn't look right.` }, 400);
+        sets.push(`${f} = ?`); vals.push(v);
+      }
       if (b.difficulty !== undefined && b.points === undefined) { sets.push('points = ?'); vals.push(POINTS[b.difficulty] || 1); }
       if (!sets.length) return json({ error: 'Nothing to change' }, 400);
       await env.DB.prepare(`UPDATE photos SET ${sets.join(', ')} WHERE id = ? AND game_id = ?`).bind(...vals, parts[1], game.id).run();
@@ -358,9 +391,14 @@ async function admin(request, env, url) {
     if (method === 'POST' && !parts[1]) {
       // Manual fix: give a team a find.
       const { photo_id, team_id } = await request.json();
-      await env.DB.prepare(
-        "INSERT INTO finds (id, game_id, photo_id, team_id, status, created_at) VALUES (?, ?, ?, ?, 'approved', ?)"
-      ).bind(id(), game.id, photo_id, team_id, now()).run();
+      // If the team has a pending find for this photo, approve it; skip if they already have it.
+      const pend = await env.DB.prepare("UPDATE finds SET status = 'approved' WHERE team_id = ? AND photo_id = ? AND game_id = ? AND status = 'pending'").bind(team_id, photo_id, game.id).run();
+      if (!pend.meta.changes) {
+        await env.DB.prepare(
+          `INSERT INTO finds (id, game_id, photo_id, team_id, status, created_at) SELECT ?, ?, ?, ?, 'approved', ?
+           WHERE NOT EXISTS (SELECT 1 FROM finds WHERE team_id = ? AND photo_id = ? AND status IN ('auto','approved'))`
+        ).bind(id(), game.id, photo_id, team_id, now(), team_id, photo_id).run();
+      }
     } else if (method === 'PATCH') {
       const { status } = await request.json();
       if (!['approved', 'rejected'].includes(status)) return json({ error: 'Bad status' }, 400);
@@ -383,9 +421,10 @@ async function admin(request, env, url) {
 
   if (path === '/export' && method === 'GET') {
     const rows = await env.DB.prepare(`SELECT f.created_at, t.name AS team, p.name AS player, ph.title, ph.points, f.status, f.distance_m
-      FROM finds f JOIN teams t ON t.id = f.team_id LEFT JOIN players p ON p.id = f.player_id JOIN photos ph ON ph.id = f.photo_id
+      FROM finds f LEFT JOIN teams t ON t.id = f.team_id LEFT JOIN players p ON p.id = f.player_id JOIN photos ph ON ph.id = f.photo_id
       WHERE f.game_id = ? ORDER BY f.created_at`).bind(game.id).all();
-    const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    // Quote every cell; prefix formula-like values so spreadsheets don't run them.
+    const esc = (v) => { let t = String(v ?? ''); if (/^[=+\-@]/.test(t)) t = "'" + t; return `"${t.replace(/"/g, '""')}"`; };
     const csv = ['time,team,player,photo,points,status,distance_m',
       ...rows.results.map((r) => [new Date(r.created_at).toISOString(), r.team, r.player, r.title, r.points, r.status, r.distance_m].map(esc).join(','))].join('\n');
     return new Response(csv, { headers: { 'content-type': 'text/csv', 'content-disposition': 'attachment; filename="photo-hunt-results.csv"' } });

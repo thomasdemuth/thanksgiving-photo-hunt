@@ -46,7 +46,8 @@ for (const [i, p] of st.photos.entries()) {
 }
 // Three teams.
 const teams = st.teams;
-await admin('/teams/' + teams[3].id, 'DELETE');
+for (const t of teams.slice(3)) await admin('/teams/' + t.id, 'DELETE');
+while (teams.length < 3) teams.push(await admin('/teams', 'POST', { name: 'Team ' + (teams.length + 1), color: '#666' }).then(() => admin('/state')).then((x) => x.teams[x.teams.length - 1]));
 const names = ['Mike', 'Ann', 'Grandma', 'Tom', 'Lucy', 'Sam', 'Dana', 'Rob', 'Kate', 'Leo', 'Jess'];
 const players = [];
 for (const [i, n] of names.entries()) {
