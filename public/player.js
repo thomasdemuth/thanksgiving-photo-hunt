@@ -3,8 +3,25 @@
   const POLL_MS = 15000;
   const LOC_MS = 30000;
   const DIFF = { 1: 'Easy', 2: 'Medium', 3: 'Hard' };
-  const TILES = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
-  const TILE_ATTR = '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+  // Base map: Esri Topographic (calm gray, street names, subway stations, house numbers up close).
+  // If its tiles keep failing, switch to OpenStreetMap automatically.
+  const TILES = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}';
+  const TILE_ATTR = '© <a href="https://www.esri.com/">Esri</a>, HERE, Garmin, USGS, OpenStreetMap';
+  const BACKUP_TILES = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+  const BACKUP_ATTR = '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+  function addBaseMap(map) {
+    const opts = { maxZoom: 20, maxNativeZoom: 19 };
+    map.attributionControl.setPrefix(false); // keep the credit line short on phones
+    const main = L.tileLayer(TILES, { ...opts, attribution: TILE_ATTR }).addTo(map);
+    let errors = 0, loaded = 0;
+    main.on('tileload', () => { loaded++; });
+    main.on('tileerror', () => {
+      if (++errors >= 6 && loaded < errors && map.hasLayer(main)) {
+        map.removeLayer(main);
+        L.tileLayer(BACKUP_TILES, { ...opts, attribution: BACKUP_ATTR }).addTo(map);
+      }
+    });
+  }
   const ICON = {
     photos: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>',
     map: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2z"/><path d="M9 4v14M15 6v14"/></svg>',
@@ -557,7 +574,7 @@
     if (!S.map) {
       S.map = L.map('map', { zoomControl: false, attributionControl: true, zoomSnap: 0.25 }).setView([40.728, -74.005], 15);
       L.control.zoom({ position: 'topright' }).addTo(S.map);
-      L.tileLayer(TILES, { maxZoom: 20, maxNativeZoom: 19, attribution: TILE_ATTR }).addTo(S.map);
+      addBaseMap(S.map);
       S.layers = { area: L.layerGroup().addTo(S.map), trail: L.layerGroup().addTo(S.map), pins: L.layerGroup().addTo(S.map), me: L.layerGroup().addTo(S.map) };
       S.mapFitted = false;
     }

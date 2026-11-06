@@ -3,8 +3,25 @@
   const DIFF = { 1: 'Easy', 2: 'Medium', 3: 'Hard' };
   const DIFF_COLOR = { 1: '#00933c', 2: '#fccc0a', 3: '#ee352e' };
   const diffTag = (d) => `<span class="diff"><span class="bullet d${d}">${'EMH'[d - 1]}</span>${DIFF[d]}</span>`;
-  const TILES = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
-  const TILE_ATTR = '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+  // Base map: Esri Topographic (calm gray, street names, subway stations, house numbers up close).
+  // If its tiles keep failing, switch to OpenStreetMap automatically.
+  const TILES = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}';
+  const TILE_ATTR = '© <a href="https://www.esri.com/">Esri</a>, HERE, Garmin, USGS, OpenStreetMap';
+  const BACKUP_TILES = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+  const BACKUP_ATTR = '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+  function addBaseMap(map) {
+    const opts = { maxZoom: 20, maxNativeZoom: 19 };
+    map.attributionControl.setPrefix(false); // keep the credit line short on phones
+    const main = L.tileLayer(TILES, { ...opts, attribution: TILE_ATTR }).addTo(map);
+    let errors = 0, loaded = 0;
+    main.on('tileload', () => { loaded++; });
+    main.on('tileerror', () => {
+      if (++errors >= 6 && loaded < errors && map.hasLayer(main)) {
+        map.removeLayer(main);
+        L.tileLayer(BACKUP_TILES, { ...opts, attribution: BACKUP_ATTR }).addTo(map);
+      }
+    });
+  }
   const TABS = { setup: 'Photos & teams', map: 'Map', live: 'Live game', results: 'Results' };
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -88,10 +105,9 @@
     $('#mk').onclick = async () => { await api('/game', 'POST', { name: $('#gn').value }); await refresh(); show('setup'); };
   }
 
-  const tile = (url, opts = {}) => L.tileLayer(TILES, { maxZoom: 20, maxNativeZoom: 19, attribution: TILE_ATTR, ...opts });
   function baseMap(elId) {
     const m = L.map(elId, { zoomControl: true }).setView([40.728, -74.005], 15);
-    tile().addTo(m);
+    addBaseMap(m);
     return m;
   }
   function drawArea(layer, b, opts = {}) {

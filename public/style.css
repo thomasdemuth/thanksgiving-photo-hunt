@@ -133,11 +133,11 @@ canvas#confetti { position: fixed; inset: 0; pointer-events: none; z-index: 70; 
 /* Map */
 .map-wrap { position: relative; }
 #map { height: calc(100vh - 220px); height: calc(100dvh - 220px); border-radius: var(--radius); border: 1px solid var(--line); background: #e8e8e8; }
-.map-buttons { position: absolute; right: 10px; bottom: 10px; z-index: 500; display: flex; gap: .4em; }
+.map-buttons { position: absolute; right: 10px; bottom: 28px; z-index: 500; display: flex; gap: .4em; }
 .map-buttons button { min-height: 48px; font-size: .8em; }
 .map-key { position: absolute; left: 10px; top: 10px; z-index: 500; background: var(--white); border: 1px solid var(--line); border-radius: var(--radius); padding: .35em .6em; font-size: .7em; line-height: 1.6; }
 .leaflet-container { font-family: var(--font); }
-.leaflet-tile-pane { filter: saturate(.5) contrast(.95) brightness(1.03); }
+.leaflet-control-attribution { font-size: 10px; }
 .me-dot { width: 18px; height: 18px; border-radius: 50%; background: #0039a6; border: 3px solid var(--white); box-shadow: 0 0 0 2px #0039a6; }
 .find-pin { width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--white); box-shadow: 0 0 0 1px rgba(0,0,0,.4); color: var(--white); font: 700 13px/20px var(--font); text-align: center; }
 .num-pin { width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--white); box-shadow: 0 0 0 1px rgba(0,0,0,.4); color: var(--white); font: 700 11px/20px var(--font); text-align: center; }
