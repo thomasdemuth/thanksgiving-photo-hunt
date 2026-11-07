@@ -437,6 +437,16 @@
 
   function tile(p) {
     const f = findFor(p.id), q = !f && queuedFor(p.id);
+    // Sent with a picture: show your team's picture, with the photo you were hunting in the corner.
+    if (f && f.proof) {
+      const res = revealed() ? (f.counted ? '<span class="pill yes">✓ Counted</span>' : '<span class="pill no">✕ Didn\'t count</span>') : `<span class="pill">✓ ${esc(f.player_name || 'Sent')}</span>`;
+      return `<button class="tile sent-pic" data-photo="${esc(p.id)}">
+        <img src="${esc(f.proof)}" alt="Your picture for photo ${numOf(p.id)}" loading="lazy">
+        <img class="inset" src="${esc(p.thumb)}" alt="" loading="lazy">
+        <span class="num">#${numOf(p.id)}</span>${res}
+        <div class="meta">${diffTag(p.difficulty)}<b>${ptsText(p.points)}</b></div>
+      </button>`;
+    }
     return `<button class="tile ${f || q ? 'found' : ''}" data-photo="${esc(p.id)}">
       <img src="${esc(p.thumb)}" alt="Photo ${numOf(p.id)}" loading="lazy">
       <span class="num">#${numOf(p.id)}</span>
@@ -514,12 +524,16 @@
     else action = `<div class="note info">${S.data.game.status === 'setup' ? 'You can submit once the game starts.' : 'The game is over.'}</div>`;
     el.innerHTML = `
       <div class="detail-top"><button class="btn-small" id="backBtn">← Back to photos</button><span class="grow"></span>${diffTag(p.difficulty)}<b>${ptsText(p.points)}</b></div>
-      <img class="full" src="${esc(p.image)}" alt="Photo ${numOf(p.id)}">
+      ${f && f.proof ? `<div class="compare" id="compare">
+          <figure><img src="${esc(p.image)}" alt="Photo ${numOf(p.id)}"><figcaption>The photo</figcaption></figure>
+          <figure><img src="${esc(f.proof)}" alt="Your team's picture"><figcaption>Your team's picture${f.player_name ? ' · ' + esc(f.player_name) : ''}</figcaption></figure>
+        </div>` : `<img class="full" src="${esc(p.image)}" alt="Photo ${numOf(p.id)}">`}
       <h2 style="margin:.6em 0 .2em">#${numOf(p.id)}${p.title ? ' · ' + esc(p.title) : ''}</h2>
-      <p class="muted small">Pinch the photo to zoom in.${others.length ? ` Also found by ${others.map((t) => esc(t.name)).join(', ')}.` : ''}</p>
+      <p class="muted small">${f && f.proof ? 'Tap the pictures to see them bigger.' : 'Pinch the photo to zoom in.'}${others.length ? ` Also found by ${others.map((t) => esc(t.name)).join(', ')}.` : ''}</p>
       ${p.hint ? `<div class="note info"><b>Hint:</b> ${esc(p.hint)}</div>` : ''}
       <div class="action stack">${action}</div>`;
     $('#backBtn').onclick = () => closeDetail();
+    const cmp = $('#compare'); if (cmp) cmp.onclick = () => cmp.classList.toggle('big');
     const start = (replace, withPic) => {
       S.warm = getFix(15000, 20); S.pending = { photo_id: p.id, replace };
       if (withPic) { $('#cam').value = ''; $('#cam').click(); } else checkIn(null);

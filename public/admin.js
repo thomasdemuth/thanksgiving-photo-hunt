@@ -79,8 +79,39 @@
 
   function renderStatus() {
     const g = A.d?.game;
-    $('#status').innerHTML = g ? `<a class="btn btn-small tv-link" href="/tv" target="_blank">📺 TV view</a> <span class="status ${g.status}">${{ setup: 'Not started', live: 'Live', ended: g.revealed_at ? 'Ended · results revealed' : 'Ended · results hidden' }[g.status]}</span>` : '';
+    const waiting = (A.d?.finds || []).filter((f) => f.status === 'pending').length;
+    $('#status').innerHTML = g ? `${waiting ? `<button class="btn-small judge-pill" id="judgePill">⚖ ${waiting} to judge</button>` : ''}<a class="btn btn-small tv-link" href="/tv" target="_blank">📺 TV view</a> <span class="status ${g.status}">${{ setup: 'Not started', live: 'Live', ended: g.revealed_at ? 'Ended · results revealed' : 'Ended · results hidden' }[g.status]}</span>` : '';
   }
+
+  // Jump to the judge queue from anywhere.
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('#judgePill')) return;
+    if (A.tab !== 'live') show('live');
+    setTimeout(() => $('#judge')?.closest('.card')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+  });
+
+  // Tap a picture in the judge queue or the photo list to see it big, next to the photo it should match,
+  // with the Yes / No buttons right there.
+  document.addEventListener('click', (e) => {
+    const a = e.target.closest('.judge-item a[href^="/img/"], .feed-item a[href^="/img/"]');
+    if (!a) return;
+    e.preventDefault();
+    const item = a.closest('.judge-item, .feed-item');
+    const pics = [...item.querySelectorAll('a[href^="/img/"]')];
+    const btns = [...item.querySelectorAll('[data-judge], [data-flip]')].filter((b) => !b.disabled);
+    const info = item.querySelector('p.small, .grow')?.innerText.replace(/\s+/g, ' ').trim() || '';
+    const o = document.createElement('div');
+    o.className = 'lightbox';
+    o.innerHTML = `<div class="lb-pics">${pics.map((p, i) => `<figure><img src="${esc(p.getAttribute('href'))}" alt=""><figcaption>${pics.length > 1 ? (i === 0 ? 'The photo' : 'Their picture') : ''}</figcaption></figure>`).join('')}</div>
+      <div class="lb-info">${esc(info)}</div>
+      <div class="lb-btns">${btns.map((b, i) => `<button class="${b.dataset.s === 'approved' ? 'btn-ok' : b.dataset.s === 'rejected' ? 'btn-bad' : ''}" data-lb="${i}">${esc(b.textContent.trim())}</button>`).join('')}<button data-lbclose>Close</button></div>`;
+    o.onclick = (ev) => {
+      const k = ev.target.closest('[data-lb]');
+      if (k) { btns[Number(k.dataset.lb)].click(); o.remove(); return; }
+      if (ev.target.closest('[data-lbclose]') || ev.target.tagName === 'IMG' || ev.target === o) o.remove();
+    };
+    document.body.appendChild(o);
+  });
 
   function show(tab) {
     A.tab = tab; A.placing = null; A.drawing = null;
@@ -547,6 +578,8 @@
         </div></div>`;
       $('#tvBtn').onclick = tv;
       const m = A.maps.live = baseMap('liveMap');
+      // On touch screens one finger scrolls the page instead of getting stuck moving the map; pinch still zooms.
+      if (L.Browser.touch && innerWidth < 900) m.dragging.disable();
       A.liveLayer = L.layerGroup().addTo(m);
       drawArea(L.layerGroup().addTo(m), A.d.game.boundary);
       if (A.d.game.boundary) m.fitBounds(A.d.game.boundary, { padding: [10, 10] });
@@ -598,7 +631,7 @@
     if (changed('judge', pending.map((f) => f.id).join())) $('#judge').innerHTML = pending.length ? pending.map((f) => {
       const p = photoOf(f.photo_id), t = teamOf(f.team_id), pl = playerOf(f.player_id);
       return `<div class="judge-item">
-        <div class="judge-pics"><figure><img src="/img/${esc(p?.thumb_key)}"><figcaption>#${numOf(f.photo_id)} · the photo</figcaption></figure>
+        <div class="judge-pics"><figure><a href="/img/${esc(p?.image_key)}" target="_blank"><img src="/img/${esc(p?.thumb_key)}"></a><figcaption>#${numOf(f.photo_id)} · the photo</figcaption></figure>
           <figure>${f.proof_key ? `<a href="/img/${esc(f.proof_key)}" target="_blank"><img src="/img/${esc(f.proof_key)}"></a>` : '<div class="nopic">No picture</div>'}<figcaption>their picture</figcaption></figure></div>
         <p class="small" style="margin:.2em 0 .5em"><span class="swatch" style="background:${esc(t?.color)}"></span> <b>${esc(pl?.name || '?')}</b> (${esc(t?.name)}) · ${Math.round(f.distance_m)} m from the spot · GPS ±${Math.round(f.accuracy_m || 0)} m</p>
         <div class="row"><button class="btn-ok grow" data-judge="${f.id}" data-s="approved">✓ Approve</button><button class="btn-bad grow" data-judge="${f.id}" data-s="rejected">✕ Reject</button></div></div>`;
@@ -608,7 +641,7 @@
     const farOpen = !!$('#farList details')?.open; // keep it open when a new one arrives
     if (changed('far', far.map((f) => f.id).join())) $('#farList').innerHTML = far.length ? `<details style="margin-top:.8em" ${farOpen ? 'open' : ''}><summary class="small" style="cursor:pointer"><b>Marked no, too far away (${far.length})</b> <span class="muted">· check these if GPS was bad</span></summary>${far.map((f) => {
       const p = photoOf(f.photo_id), t = teamOf(f.team_id), pl = playerOf(f.player_id);
-      return `<div class="judge-item"><div class="judge-pics"><figure><img src="/img/${esc(p?.thumb_key)}" loading="lazy"><figcaption>#${numOf(f.photo_id)} · the photo</figcaption></figure>
+      return `<div class="judge-item"><div class="judge-pics"><figure><a href="/img/${esc(p?.image_key)}" target="_blank"><img src="/img/${esc(p?.thumb_key)}" loading="lazy"></a><figcaption>#${numOf(f.photo_id)} · the photo</figcaption></figure>
         <figure>${f.proof_key ? `<a href="/img/${esc(f.proof_key)}" target="_blank"><img src="/img/${esc(f.proof_key)}" loading="lazy"></a>` : '<div class="nopic">No picture</div>'}<figcaption>their picture</figcaption></figure></div>
         <p class="small" style="margin:.2em 0 .5em"><span class="swatch" style="background:${esc(t?.color)}"></span> <b>${esc(pl?.name || '?')}</b> (${esc(t?.name)}) · ${Math.round(f.distance_m)} m from the spot · GPS ±${Math.round(f.accuracy_m || 0)} m</p>
         <button class="btn-ok btn-small" data-judge="${f.id}" data-s="approved">✓ Approve anyway</button></div>`;

@@ -194,6 +194,8 @@ function playerView(s, me, mates) {
         id: f.id, photo_id: f.photo_id, team_id: f.team_id, player_name: f.player_name, created_at: f.created_at,
         // Other teams' spots would give away photo locations.
         lat: mine ? f.lat : null, lng: mine ? f.lng : null, by_me: f.player_id === me.id,
+        // Your own team's picture, so you can compare it with the photo you were hunting.
+        proof: mine && f.proof_key ? `/img/${f.proof_key}` : null,
         ...(revealed ? { counted: COUNTS.has(f.status) } : {}),
       };
     });
