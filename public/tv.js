@@ -31,7 +31,8 @@
     popups: { label: 'Pop up new photos', help: 'Show each new photo big in the middle of the screen.', def: true },
     trails: { label: 'Walking trails', help: 'Draw the path each player has walked.', def: true },
     names: { label: 'Names on the map', help: 'Label each player\'s dot with their name.', def: true },
-    sound: { label: 'Sound', help: 'A chime for new photos, and drumrolls and music for the final reveal.', def: true },
+    spots: { label: 'Photo spots on the map', help: 'Show every hunt spot, numbered, like the host sees them. Careful: players could peek!', def: false },
+    sound: { label: 'Sound', help: 'A chime for new photos, and music for the final reveal.', def: true },
   };
   const opt = (k) => { const v = localStorage.getItem('tv-' + k); return v === null ? SETTINGS[k].def : v === '1'; };
   const setOpt = (k, v) => localStorage.setItem('tv-' + k, v ? '1' : '0');
@@ -81,7 +82,7 @@
       </div>`;
     T.map = L.map('tvMap', { zoomControl: false, zoomSnap: 0.25 }).setView([40.728, -74.005], 15);
     addBaseMap(T.map);
-    T.L = { area: L.layerGroup().addTo(T.map), trails: L.layerGroup().addTo(T.map), players: L.layerGroup().addTo(T.map) };
+    T.L = { area: L.layerGroup().addTo(T.map), spots: L.layerGroup().addTo(T.map), trails: L.layerGroup().addTo(T.map), players: L.layerGroup().addTo(T.map) };
     T.markers = {}; T.trails = {}; T.sig = {};
     $('#gear').onclick = (e) => { e.stopPropagation(); toggleSettings(); };
     tick();
@@ -131,7 +132,7 @@
         // Nothing changed except people moving: update dots, trails and the clock.
         T.offset = d.now - Date.now();
         for (const p of d.pings || []) { (T.pings[p.player_id] ||= []).push([p.lat, p.lng]); if (p.at > T.lastPing) T.lastPing = p.at; }
-        T.d.players = d.players; T.d.now = d.now; T.down = false;
+        T.d.players = d.players; T.d.now = d.now; T.down = false; // spots, finds etc. unchanged
         renderPlayers(); renderClock(); renderStatus();
         return;
       }
@@ -185,7 +186,7 @@
     renderStatus();
     renderClock();
     if (changed('area', JSON.stringify(d.game.boundary))) drawArea();
-    renderTeams(); renderPlayers(); renderOverlay();
+    renderTeams(); renderSpots(); renderPlayers(); renderOverlay();
     queueNew();
     const rkey = d.game.id + ':' + d.game.revealed;
     if (d.game.revealed && T.revealShownFor !== rkey) { T.revealShownFor = rkey; showReveal(); }
@@ -263,6 +264,20 @@
     if (!T.map || !b) return;
     T.map.invalidateSize();
     T.map.fitBounds(b, { padding: [24, 24], animate: false });
+  }
+
+  // Optional layer: every hunt spot, numbered and colored by difficulty (green Easy, yellow Medium, red Hard).
+  const DIFF_COLOR = { 1: '#00933c', 2: '#fccc0a', 3: '#ee352e' };
+  function renderSpots() {
+    const spots = opt('spots') ? (T.d.spots || []) : [];
+    if (!changed('spots', JSON.stringify(spots) + T.d.photos.map((p) => p.id + p.difficulty).join())) return;
+    T.L.spots.clearLayers();
+    for (const sp of spots) {
+      const p = photoOf(sp.id); if (!p) continue;
+      const c = DIFF_COLOR[p.difficulty];
+      L.circle([sp.lat, sp.lng], { radius: sp.radius_m, color: c, weight: 1, fillOpacity: 0.12, interactive: false }).addTo(T.L.spots);
+      L.marker([sp.lat, sp.lng], { icon: L.divIcon({ className: '', html: `<div class="tv-spot d${p.difficulty}" style="background:${c}">${numOf(p.id)}</div>`, iconSize: [24, 24] }), interactive: false, zIndexOffset: -100 }).addTo(T.L.spots);
+    }
   }
 
   // Each player's dot (and trail, if turned on), in their team color.
@@ -397,14 +412,45 @@
       ding(level) { if (!ready()) return; const t = ctx.currentTime, f = [0, 660, 880, 1175][level] || 880; tone(f, t, 0.4, 'triangle', 0.22); tone(f * 2, t, 0.25, 'sine', 0.06); },
       // Soft two-note chime for a new photo on the TV.
       chime() { if (!ready()) return; const t = ctx.currentTime; tone(784, t, 0.5, 'sine', 0.18); tone(1047, t + 0.16, 0.7, 'sine', 0.16); },
-      whoosh() { if (!ready()) return; const t = ctx.currentTime, f = noise(t, 0.7, 0.25, 'bandpass', 400); f.frequency.exponentialRampToValueAtTime(3500, t + 0.6); },
-      // Snare roll that gets louder.
-      drumroll(sec) {
+      // Soft airy sweep between sections (kept quiet and low).
+      whoosh() { if (!ready()) return; const t = ctx.currentTime, f = noise(t, 0.6, 0.08, 'lowpass', 300); f.frequency.exponentialRampToValueAtTime(1800, t + 0.5); },
+      // Suspense swell (instead of a drum roll): a warm chord that slowly brightens and grows,
+      // over a low, gentle rumble. No clicks or hiss.
+      swell(sec) {
         if (!ready()) return;
-        const t = ctx.currentTime, n = Math.floor(sec * 26);
-        for (let i = 0; i < n; i++) noise(t + i / 26, 0.06, 0.04 + 0.3 * (i / n) ** 2, 'highpass', 1200);
+        const t = ctx.currentTime, end = t + sec;
+        const filt = ctx.createBiquadFilter(); filt.type = 'lowpass'; filt.Q.value = 0.7;
+        filt.frequency.setValueAtTime(250, t); filt.frequency.exponentialRampToValueAtTime(2200, end);
+        const pad = ctx.createGain();
+        pad.gain.setValueAtTime(0.0001, t); pad.gain.exponentialRampToValueAtTime(0.16, end - 0.05); pad.gain.exponentialRampToValueAtTime(0.0001, end + 0.35);
+        filt.connect(pad).connect(out);
+        // A minor-ish chord that lifts a step at the end, so it "asks a question".
+        [[220, 247], [277, 311], [330, 370], [440, 494]].forEach(([from, to]) => {
+          for (const detune of [-6, 6]) {
+            const o = ctx.createOscillator(); o.type = 'triangle'; o.detune.value = detune;
+            o.frequency.setValueAtTime(from, t); o.frequency.setValueAtTime(from, end - 0.6); o.frequency.exponentialRampToValueAtTime(to, end - 0.05);
+            o.connect(filt); o.start(t); o.stop(end + 0.4);
+          }
+        });
+        // Low timpani-like rumble: a deep tone gently pulsing.
+        const low = ctx.createOscillator(), lg = ctx.createGain(), lfo = ctx.createOscillator(), lfoG = ctx.createGain();
+        low.frequency.value = 55; lfo.frequency.value = 7; lfoG.gain.value = 0.05;
+        lg.gain.setValueAtTime(0.0001, t); lg.gain.exponentialRampToValueAtTime(0.18, end - 0.05); lg.gain.exponentialRampToValueAtTime(0.0001, end + 0.3);
+        lfo.connect(lfoG).connect(lg.gain);
+        low.connect(lg).connect(out); low.start(t); lfo.start(t); low.stop(end + 0.35); lfo.stop(end + 0.35);
       },
-      crash() { if (!ready()) return; noise(ctx.currentTime, 2.4, 0.45, 'highpass', 4500); tone(80, ctx.currentTime, 0.5, 'sine', 0.4); },
+      // Low "nope" buzz for an answer that didn't count.
+      buzz() { if (!ready()) return; const t = ctx.currentTime; tone(160, t, 0.3, 'square', 0.09); tone(115, t + 0.13, 0.38, 'square', 0.09); },
+      // Big warm "ta-da" hit: a deep boom plus a soft bell chord (no harsh cymbal).
+      crash() {
+        if (!ready()) return;
+        const t = ctx.currentTime;
+        const o = ctx.createOscillator(), g = ctx.createGain();
+        o.frequency.setValueAtTime(110, t); o.frequency.exponentialRampToValueAtTime(45, t + 0.6);
+        g.gain.setValueAtTime(0.45, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.9);
+        o.connect(g).connect(out); o.start(t); o.stop(t + 1);
+        [1047, 1319, 1568, 2093].forEach((f, i) => tone(f, t + i * 0.03, 2.2, 'sine', 0.06));
+      },
       fanfare() {
         if (!ready()) return;
         const t = ctx.currentTime + 0.05;
@@ -433,12 +479,14 @@
     d.teams.forEach((t) => { if (!teams.includes(t)) teams.push(t); });
     if (!teams.length) return;
     const ranked = [...teams].sort((a, b) => b.score - a.score || a.reached_at - b.reached_at);
-    const counted = d.finds.filter((f) => f.status === 'auto' || f.status === 'approved');
-    const run = (T.revealRun = { fast: false });
+    const yes = (f) => f.status === 'auto' || f.status === 'approved';
+    // Each team's answer for a photo (at most one), and the photos anyone answered, in number order.
+    const answer = (t, p) => d.finds.find((f) => f.team_id === t.id && f.photo_id === p.id) || null;
+    const run = (T.revealRun = { fast: false, speed: 1 });
     const o = document.createElement('div');
     o.className = 'reveal'; o.id = 'reveal';
-    o.innerHTML = `<div class="rv-btns"><button id="rvSkip">Skip to the winner</button><button id="rvClose">Back to the map</button></div>
-      <div class="rv-stage"><div class="rv-title" id="rvTitle"></div><div class="rv-sub" id="rvSub"></div><div class="rv-card" id="rvCard"></div></div>
+    o.innerHTML = `<div class="rv-btns"><span class="rv-speed">Speed ${[1, 2, 4].map((x) => `<button data-sp="${x}" class="${x === 1 ? 'on' : ''}">${x}×</button>`).join('')}</span><button id="rvSkip">Skip to the winner</button><button id="rvClose">Back to the map</button></div>
+      <div class="rv-stage"><div class="rv-title" id="rvTitle"></div><div class="rv-sub" id="rvSub"></div><div class="rv-round" id="rvRound"></div></div>
       <div class="rv-lanes" id="rvLanes">${teams.map((t) => `
         <div class="lane" data-team="${esc(t.id)}" style="--c:${esc(t.color)}">
           <div class="ln-name">${esc(t.name)}<small>${esc(t.members.join(', '))}</small></div>
@@ -447,9 +495,10 @@
         </div>`).join('')}</div>`;
     document.body.appendChild(o);
     $('#rvClose').onclick = () => o.remove();
-    $('#rvSkip').onclick = () => { run.fast = true; $('#rvSkip').remove(); };
+    $('#rvSkip').onclick = () => { run.fast = true; $('#rvSkip').remove(); o.querySelector('.rv-speed')?.remove(); };
+    o.querySelectorAll('[data-sp]').forEach((b) => b.onclick = () => { run.speed = Number(b.dataset.sp); o.querySelectorAll('[data-sp]').forEach((x) => x.classList.toggle('on', x === b)); });
     const live = () => o.isConnected && T.revealRun === run;
-    const pause = (ms) => (run.fast ? Promise.resolve() : wait(ms));
+    const pause = (ms) => (run.fast ? Promise.resolve() : wait(ms / run.speed));
     const title = (t, sub = '') => { $('#rvTitle').textContent = t; $('#rvSub').textContent = sub; $('#rvTitle').classList.remove('in'); void $('#rvTitle').offsetWidth; $('#rvTitle').classList.add('in'); };
     const maxScore = Math.max(1, ...teams.map((t) => t.score));
     const score = Object.fromEntries(teams.map((t) => [t.id, 0]));
@@ -459,45 +508,63 @@
       const l = lane(id); if (!l) return;
       l.querySelector('.ln-fill').style.width = (100 * v) / maxScore + '%';
       l.querySelector('.ln-score').textContent = v;
+      l.classList.remove('bump'); void l.offsetWidth; l.classList.add('bump');
     };
-    // Load every picture up front so the count-up doesn't stutter.
-    counted.forEach((f) => { const p = photoOf(f.photo_id); preload(f.proof_key ? `/img/${f.proof_key}` : p?.thumb); });
+    // Load every picture up front so nothing pops in late.
+    d.finds.forEach((f) => { if (f.proof_key) preload(`/img/${f.proof_key}`); });
+    d.photos.forEach((p) => { if (teams.some((t) => answer(t, p))) preload(p.image); });
 
-    title('The results are in!', 'Let\'s count up every photo…');
-    Sound.drumroll(2.2);
+    title('The results are in!', 'Let\'s go through every photo…');
+    Sound.swell(2.6);
     await pause(2800);
     for (const level of [1, 2, 3]) {
       if (!live()) return;
       if (run.fast) break;
-      // Take turns between teams so the race stays close.
-      const per = teams.map((t) => counted.filter((f) => f.team_id === t.id && photoOf(f.photo_id)?.difficulty === level).sort((a, b) => a.created_at - b.created_at));
-      const items = [];
-      for (let i = 0; per.some((q) => q[i]); i++) per.forEach((q) => q[i] && items.push(q[i]));
+      const photos = d.photos.filter((p) => p.difficulty === level && teams.some((t) => answer(t, p)));
       const pts = d.photos.find((p) => p.difficulty === level)?.points ?? level;
-      title(`${DIFF[level]} photos`, `${pts} point${pts === 1 ? '' : 's'} each · ${items.length ? items.length + ' found' : 'nobody found one!'}`);
-      $('#rvCard').innerHTML = '';
+      $('#rvRound').innerHTML = '';
+      title(`${DIFF[level]} photos`, `${pts} point${pts === 1 ? '' : 's'} each · ${photos.length ? `${photos.length} photo${photos.length === 1 ? '' : 's'} to check` : 'nobody tried one!'}`);
       Sound.whoosh();
-      await pause(1700);
-      const step = Math.max(180, Math.min(750, 9000 / Math.max(1, items.length)));
-      for (const f of items) {
+      await pause(2000);
+      for (const [i, p] of photos.entries()) {
         if (!live()) return;
         if (run.fast) break;
-        const t = teamOf(f.team_id), p = photoOf(f.photo_id), pl = playerOf(f.player_id);
-        $('#rvCard').innerHTML = `<div class="rv-photo" style="--c:${esc(t.color)}">
-          <img src="${esc(f.proof_key ? `/img/${f.proof_key}` : p?.thumb)}" alt="">
-          <div class="rv-plus">+${p?.points ?? 0}</div>
-          <div class="rv-cap"><b>${esc(t.name)}</b> · #${numOf(f.photo_id)}${pl ? ' · ' + esc(pl.name) : ''}</div></div>`;
-        setScore(t.id, score[t.id] + (p?.points || 0));
-        const l = lane(t.id); l.classList.remove('bump'); void l.offsetWidth; l.classList.add('bump');
-        Sound.ding(level);
-        await pause(step);
+        // 1. The photo, and every team's answer next to it.
+        $('#rvTitle').textContent = `${DIFF[level]} photos`;
+        $('#rvSub').textContent = `Photo ${i + 1} of ${photos.length}`;
+        $('#rvRound').innerHTML = `<div class="rnd">
+          <figure class="rnd-target"><img src="${esc(p.image)}" alt=""><figcaption><b>#${numOf(p.id)}</b>${p.title ? ' · ' + esc(p.title) : ''} · ${p.points} pt${p.points === 1 ? '' : 's'}</figcaption></figure>
+          <div class="rnd-answers" style="--n:${teams.length}">${teams.map((t, k) => {
+            const f = answer(t, p), pl = f && playerOf(f.player_id);
+            const img = f && (f.proof_key ? `/img/${f.proof_key}` : null);
+            return `<div class="ans ${f ? '' : 'none'}" data-t="${esc(t.id)}" style="--c:${esc(t.color)};animation-delay:${k * 0.25}s">
+              <div class="ans-h">${esc(t.name)}</div>
+              <div class="ans-pic">${f ? (img ? `<img src="${esc(img)}" alt="">` : `<div class="ans-nopic">${pl ? 'No picture' : 'Added by the judge'}</div>`) : '<div class="ans-nopic">No answer</div>'}
+                <div class="ans-stamp"></div></div>
+              <div class="ans-by">${f ? esc(pl?.name || 'Judge') : '&nbsp;'}</div>
+            </div>`;
+          }).join('')}</div></div>`;
+        Sound.chime();
+        await pause(2200);
+        // 2. Stamp each answer: green check or red X, then add the points.
+        for (const t of teams) {
+          const f = answer(t, p); if (!f) continue;
+          if (!live()) return;
+          const card = o.querySelector(`.ans[data-t="${CSS.escape(t.id)}"]`);
+          const ok = yes(f);
+          card.classList.add(ok ? 'yes' : 'no');
+          card.querySelector('.ans-stamp').innerHTML = ok ? `<span>✓</span><b>+${p.points}</b>` : '<span>✕</span>';
+          if (ok) { Sound.ding(level); setScore(t.id, score[t.id] + p.points); } else Sound.buzz();
+          await pause(700);
+        }
+        await pause(1500);
       }
-      await pause(900);
     }
     if (!live()) return;
     // Make sure the bars end on the official scores (also after "Skip").
     teams.forEach((t) => setScore(t.id, t.score));
-    $('#rvCard').innerHTML = '';
+    $('#rvRound').innerHTML = '';
+    o.querySelector('.rv-speed')?.remove();
     title('Final scores');
     // Slide the lanes into finishing order.
     const box = $('#rvLanes'), before = new Map([...box.children].map((el) => [el, el.getBoundingClientRect().top]));
@@ -511,13 +578,15 @@
     await wait(run.fast ? 900 : 1800);
     if (!live()) return;
     title('And the winner is…');
-    Sound.drumroll(2.8);
+    $('#rvRound').innerHTML = '<div class="rv-win"><div class="rv-trophy wait">🥁</div></div>';
+    Sound.swell(3.0);
     await wait(3100);
     if (!live()) return;
     const w = ranked[0], tie = ranked[1] && ranked[1].score === w.score;
     title(`${w.name} team wins!`, `${w.score} points${tie ? ' · tied, but they got there first' : ''} · ${w.members.join(', ')}`);
     $('#rvTitle').style.color = w.color;
     lane(w.id).classList.add('winner');
+    $('#rvRound').innerHTML = `<div class="rv-win"><div class="rv-trophy">🏆</div><div class="rv-wname" style="color:${esc(w.color)}">${esc(w.name)}</div><div class="rv-wpts">${w.score} points · ${w.found} photo${w.found === 1 ? '' : 's'} right</div></div>`;
     $('#rvSkip')?.remove();
     Sound.crash(); Sound.fanfare();
     confetti();

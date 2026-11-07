@@ -118,3 +118,46 @@ body.tv-page.idle, body.tv-page.idle * { cursor: none !important; }
 .tv-cd { font-size: 10em; font-weight: 700; line-height: 1; color: var(--orange); }
 .tv-cd.tick { animation: cdtick .9s ease-out; }
 @keyframes cdtick { from { transform: scale(1.5); opacity: .3; } 40% { transform: scale(1); opacity: 1; } }
+
+/* Optional photo-spot pins (TV setting) */
+.tv-spot { width: 24px; height: 24px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.4); color: #fff; font: 700 11px/20px var(--font); text-align: center; }
+.tv-spot.d2 { color: #111; }
+
+/* Reveal, photo by photo: the photo on the left, each team's answer on the right, then ✓ or ✕ */
+.rv-stage { justify-content: flex-start; padding-top: 1vh; }
+.rv-title { font-size: 2.8em; }
+.rv-sub { font-size: 1.3em; margin-top: .15em; }
+.rv-round { flex: 1; width: 100%; min-height: 0; display: flex; align-items: center; justify-content: center; margin-top: 1.5vh; }
+.rnd { display: grid; grid-template-columns: minmax(0, 36%) minmax(0, 1fr); gap: 2.5vw; width: min(100%, 110em); align-items: center; }
+.rnd-target { margin: 0; animation: flip .5s ease-out; }
+.rnd-target img { width: 100%; aspect-ratio: 4/3; object-fit: cover; border-radius: 8px; border: .3em solid #fff; display: block; }
+.rnd-target figcaption { margin-top: .4em; font-size: 1.3em; text-align: center; color: #ddd; }
+.rnd-answers { display: grid; grid-template-columns: repeat(var(--n), minmax(0, 1fr)); gap: 1.2vw; }
+.ans { background: #1b1b1b; border-radius: 8px; overflow: hidden; border: .25em solid var(--c); opacity: 0; animation: ansin .5s ease-out forwards; transition: transform .3s, box-shadow .3s; }
+.ans.none { opacity: .45 !important; animation: none; }
+.ans-h { background: var(--c); color: #fff; font-weight: 700; font-size: 1.3em; padding: .3em .6em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ans-pic { position: relative; }
+.ans-pic img, .ans-nopic { width: 100%; aspect-ratio: 3/4; object-fit: cover; display: flex; align-items: center; justify-content: center; background: #2a2a2a; color: #888; font-size: 1.1em; }
+.ans-by { padding: .3em .6em; color: #ccc; font-size: 1em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ans-stamp { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; }
+.ans-stamp span { width: 2.2em; height: 2.2em; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 3.4em; font-weight: 700; color: #fff; animation: stampin .45s cubic-bezier(.2, 1.7, .4, 1); box-shadow: 0 .1em .4em rgba(0,0,0,.4); }
+.ans-stamp b { margin-top: .25em; font-size: 2.2em; color: #fff; background: var(--green); padding: 0 .4em; border-radius: 6px; animation: plus .6s .15s cubic-bezier(.2, 1.8, .4, 1) both; }
+.ans.yes .ans-stamp span { background: var(--green); }
+.ans.no .ans-stamp span { background: var(--red); }
+.ans.yes { box-shadow: 0 0 0 .2em var(--green), 0 0 1.6em rgba(0,147,60,.6); transform: translateY(-.3em); }
+.ans.no .ans-pic img { filter: grayscale(.8) brightness(.6); }
+.rv-speed { display: inline-flex; align-items: center; gap: .3em; color: #aaa; font-size: .85em; margin-right: .4em; }
+.rv-speed button { min-height: 0; padding: .2em .55em; background: transparent; color: #bbb; border: 1px solid #555; font-weight: 400; font-size: 1em; }
+.rv-speed button.on { background: #fff; color: #111; border-color: #fff; font-weight: 700; }
+.reveal { grid-template-rows: 1fr auto; }
+.rv-lanes .lane { padding: .4em 1em; }
+.rv-lanes .ln-score { font-size: 2.2em; }
+@keyframes ansin { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: none; } }
+@keyframes stampin { from { transform: scale(2.4) rotate(-15deg); opacity: 0; } to { transform: none; opacity: 1; } }
+
+.rv-win { text-align: center; }
+.rv-trophy { font-size: 9em; line-height: 1; animation: rise .7s cubic-bezier(.2, 1.5, .4, 1); }
+.rv-trophy.wait { animation: shake .25s ease-in-out infinite alternate; }
+.rv-wname { font-size: 3.4em; font-weight: 700; margin-top: .1em; }
+.rv-wpts { font-size: 1.5em; color: #ddd; }
+@keyframes shake { from { transform: rotate(-6deg); } to { transform: rotate(6deg); } }

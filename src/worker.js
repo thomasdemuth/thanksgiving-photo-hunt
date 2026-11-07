@@ -581,8 +581,12 @@ async function admin(request, env, url) {
     const v = tag(game);
     // Nothing new since the TV's last look: just the moving dots.
     if (url.searchParams.get('v') === v) return json({ same: true, v, players: players.results, pings: pings.results, now: now() });
-    const s = await gameState(env, game);
-    return json({ ...s, players: players.results, v, pings: pings.results, now: now() });
+    const [s, spots] = await Promise.all([
+      gameState(env, game),
+      // Where each hunt photo is, for the TV's optional "photo spots" layer (admin password only).
+      env.DB.prepare('SELECT id, lat, lng, radius_m FROM photos WHERE game_id = ? AND lat IS NOT NULL').bind(game.id).all(),
+    ]);
+    return json({ ...s, spots: spots.results, players: players.results, v, pings: pings.results, now: now() });
   }
 
   // Remove a player. Their phone goes back to the join screen; photos they sent stay with their team.
