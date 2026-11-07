@@ -158,6 +158,7 @@
               </ul></details>
             <p id="upProg" class="small" style="margin:.4em 0 0"></p>
           </div>
+          ${photos.length ? radiusBar(photos) : ''}
           ${noPin ? `<div class="note"><b>${noPin} photo${noPin > 1 ? 's need' : ' needs'} a pin.</b> No location was saved in ${noPin > 1 ? 'them' : 'it'}. Click "Place pin".</div>` : ''}
           ${photos.length ? `<div class="plist">
             ${photos.map(photoRow).join('')}</div>` : '<p class="muted center">No photos yet.</p>'}
@@ -187,7 +188,7 @@
         <input class="f-title" data-f="title" value="${esc(p.title)}" placeholder="Title (optional)">
         <span class="dseg f-diff">${[1, 2, 3].map((d) => `<button data-d="${d}" class="${p.difficulty === d ? 'on' : ''}">${DIFF[d]}</button>`).join('')}</span>
         <span class="unit f-pts"><input data-f="points" type="number" min="0" value="${p.points}"><i>pts</i></span>
-        <span class="unit f-rad" title="Check-in radius"><input data-f="radius_m" type="number" min="5" value="${p.radius_m}"><i>m</i></span>
+        <span class="unit f-rad" title="Check-in radius: how close a player must be (${p.radius_m} m ≈ ${ft(p.radius_m)} ft)"><input data-f="radius_m" type="number" min="5" max="500" value="${p.radius_m}"><i>m</i></span>
         <input class="f-hint" data-f="hint" value="${esc(p.hint)}" placeholder="Hint (optional)">
       </div>
       <div class="pact">
@@ -197,7 +198,48 @@
     </div>`;
   }
 
+  const ft = (m) => Math.round((m * 3.28084) / 5) * 5;
+
+  // One control to set the check-in radius for every photo (or one difficulty) at once.
+  function radiusBar(photos) {
+    const tally = {};
+    photos.forEach((p) => { tally[p.radius_m] = (tally[p.radius_m] || 0) + 1; });
+    const common = Object.entries(tally).sort((a, b) => b[1] - a[1]);
+    const now = common.map(([r, n]) => `${r} m on ${n === photos.length ? 'all' : n}`).join(', ');
+    return `<div class="radius-bar">
+      <div><b>Check-in radius</b> <span class="small muted">· how close a player has to be for a "yes". Now: ${now}.</span></div>
+      <div class="row" style="gap:.4em;margin-top:.4em">
+        <span class="small">Set</span>
+        <select id="radWho" style="width:auto"><option value="">all ${photos.length} photos</option>${[1, 2, 3].map((d) => `<option value="${d}">${DIFF[d]} photos (${photos.filter((p) => p.difficulty === d).length})</option>`).join('')}</select>
+        <span class="small">to</span>
+        <span class="unit" style="width:84px"><input id="radVal" type="number" min="5" max="500" value="${common[0][0]}"><i>m</i></span>
+        <span class="small muted" id="radFt">≈ ${ft(common[0][0])} ft</span>
+        ${[25, 40, 60, 100].map((r) => `<button class="btn-small rad-pre" data-rad="${r}">${r} m</button>`).join('')}
+        <button class="btn-small btn-primary" id="radApply">Apply</button>
+      </div>
+      <p class="small muted" style="margin:.3em 0 0">Photos already sent get re-checked with the new radius. The judge's own yes/no calls stay. Change one photo in its row below, or on the Map tab.</p>
+    </div>`;
+  }
+  function bindRadiusBar() {
+    const val = $('#radVal'); if (!val) return;
+    val.oninput = () => { $('#radFt').textContent = `≈ ${ft(Number(val.value) || 0)} ft`; };
+    document.querySelectorAll('[data-rad]').forEach((b) => b.onclick = () => { val.value = b.dataset.rad; val.oninput(); });
+    $('#radApply').onclick = async () => {
+      const r = Math.round(Number(val.value)), d = $('#radWho').value;
+      if (!(r >= 5 && r <= 500)) { alert('Pick a radius between 5 and 500 meters.'); return; }
+      const which = d ? `all ${DIFF[d]} photos` : 'every photo';
+      if (!confirm(`Set the check-in radius of ${which} to ${r} m (about ${ft(r)} ft)?\n\nPhotos already sent will be re-checked. The judge's own calls stay.`)) return;
+      $('#radApply').disabled = true;
+      try {
+        const res = await api('/photos', 'PATCH', { radius_m: r, difficulty: d ? Number(d) : null });
+        await refresh(); renderSetup();
+        $('#upProg').innerHTML = `<b>Radius set to ${r} m on ${res.photos} photo${res.photos === 1 ? '' : 's'}.</b>${res.rechecked ? ` Re-checked ${res.rechecked} answer${res.rechecked === 1 ? '' : 's'} already sent.` : ''}`;
+      } finally { const b = $('#radApply'); if (b) b.disabled = false; }
+    };
+  }
+
   function bindRows() {
+    bindRadiusBar();
     document.querySelectorAll('[data-row]').forEach((row) => {
       const pid = row.dataset.row;
       row.querySelectorAll('[data-f]').forEach((inp) => inp.onchange = async () => {
@@ -405,8 +447,11 @@
   function drawRings() {
     const m = A.maps.admin; if (!m) return;
     A.ringLayer.clearLayers();
+    // The selected photo's circle always shows, so you can see the radius you're setting.
+    const sel = A.d.photos.find((p) => p.id === A.sel && p.lat != null);
+    if (sel) A.selRing = L.circle([sel.lat, sel.lng], { radius: sel.radius_m, color: '#e8590c', weight: 3, fillOpacity: 0.15, interactive: false }).addTo(A.ringLayer);
     if (m.getZoom() < 17) return;
-    A.d.photos.forEach((p) => { if (p.lat != null && visible(p)) L.circle([p.lat, p.lng], { radius: p.radius_m, color: DIFF_COLOR[p.difficulty], weight: 1, fillOpacity: 0.1, interactive: false }).addTo(A.ringLayer); });
+    A.d.photos.forEach((p) => { if (p.lat != null && visible(p) && p !== sel) L.circle([p.lat, p.lng], { radius: p.radius_m, color: DIFF_COLOR[p.difficulty], weight: 1, fillOpacity: 0.1, interactive: false }).addTo(A.ringLayer); });
   }
 
   function renderSide() {
@@ -435,7 +480,17 @@
     document.querySelectorAll('[data-item]').forEach((el) => el.classList.toggle('sel', el.dataset.item === pid));
     const item = document.querySelector(`[data-item="${pid}"]`); if (item) item.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     if (fly && p?.lat != null) A.maps.admin.flyTo([p.lat, p.lng], Math.max(A.maps.admin.getZoom(), 17), { duration: 0.5 });
-    if (p && p.lat != null) hint(`<b>#${i + 1}</b> ${esc(p.title || '')} · drag the pin to move it`);
+    if (p && p.lat != null) {
+      hint(`<b>#${i + 1}</b> ${esc(p.title || '')} <span class="hint-rad">Radius <input type="range" id="selRad" min="5" max="200" step="5" value="${Math.min(200, p.radius_m)}"> <b id="selRadTxt">${p.radius_m} m · ${ft(p.radius_m)} ft</b></span> <span style="opacity:.7">drag the pin to move it</span>`);
+      const sl = $('#selRad');
+      sl.oninput = () => { const r = Number(sl.value); $('#selRadTxt').textContent = `${r} m · ${ft(r)} ft`; A.selRing?.setRadius(r); };
+      sl.onchange = async () => {
+        const res = await api('/photos/' + pid, 'PATCH', { radius_m: Number(sl.value) });
+        await refresh(); drawRings();
+        if (res.rechecked) $('#selRadTxt').textContent += ` · re-checked ${res.rechecked} answer${res.rechecked === 1 ? '' : 's'}`;
+      };
+    }
+    drawRings();
   }
 
   function startPlacing(pid) {

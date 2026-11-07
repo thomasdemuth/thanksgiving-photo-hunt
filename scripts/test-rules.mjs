@@ -140,6 +140,31 @@ t('radius 0 rejected', v1.status === 400, v1);
 const v2 = await admin('/photos/' + p7.id, 'PATCH', { points: '' });
 t('empty points rejected', v2.status === 400, v2);
 
+// Radius changes re-check answers already sent (judge calls stay)
+await admin('/game', 'PATCH', { action: 'reopen' });
+st = await admin('/state');
+const rq = st.photos.filter((p) => p.lat != null && !st.finds.some((f) => f.team_id === team2.id && f.photo_id === p.id));
+await send(c.token, rq[0], 0.0009); // ~100 m away
+await send(c.token, rq[1], 0.0009);
+st = await admin('/state');
+const judged = active(st, team2.id, rq[1].id)[0];
+await admin('/finds/' + judged.id, 'PATCH', { status: 'rejected' });
+const one = await admin('/photos/' + rq[0].id, 'PATCH', { radius_m: 150 });
+st = await admin('/state');
+t('a bigger radius on one photo turns a "no" into a "yes"', active(st, team2.id, rq[0].id)[0].status === 'auto' && one.rechecked >= 1, [active(st, team2.id, rq[0].id), one]);
+const all = await admin('/photos', 'PATCH', { radius_m: 150 });
+st = await admin('/state');
+t('set-all changes every photo', all.photos === st.photos.length && st.photos.every((p) => p.radius_m === 150), all);
+t('set-all leaves the judge\'s calls alone', active(st, team2.id, rq[1].id)[0].status === 'rejected');
+await admin('/photos', 'PATCH', { radius_m: 20, difficulty: 3 });
+st = await admin('/state');
+t('set-all can target one difficulty', st.photos.every((p) => p.radius_m === (p.difficulty === 3 ? 20 : 150)));
+t('set-all rejects a silly radius', (await admin('/photos', 'PATCH', { radius_m: 2 })).status === 400);
+const moved = await admin('/photos/' + rq[0].id, 'PATCH', { lat: rq[0].lat + 0.01 });
+st = await admin('/state');
+t('moving a pin re-checks answers too', active(st, team2.id, rq[0].id)[0].status === 'far' && moved.rechecked >= 1, active(st, team2.id, rq[0].id));
+await admin('/photos', 'PATCH', { radius_m: 40 });
+
 // Reset one judge call, then reset the whole game
 await admin('/game', 'PATCH', { action: 'reopen' });
 const rp = st.photos.filter((p) => p.lat != null && !st.finds.some((f) => f.team_id === team2.id && f.photo_id === p.id))[0];

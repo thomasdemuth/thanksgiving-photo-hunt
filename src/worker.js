@@ -87,6 +87,31 @@ function effectiveStatus(game) {
 //   replaced = the team submitted this photo again; only the newest answer counts
 const COUNTS = new Set(['auto', 'approved']);
 
+// Yes / judge / no from the distance. A little extra room for poor GPS between tall buildings.
+function gpsVerdict(distance, radius, acc) {
+  const slack = Math.max(radius * 2, radius + Math.min(acc || 0, 60));
+  return distance <= radius ? 'auto' : distance <= slack ? 'pending' : 'far';
+}
+
+// After a photo's radius or pin changes, re-mark the answers already sent for it.
+// The judge's own calls (approved / rejected) are left alone. Returns how many changed.
+async function recheck(env, gameId, photoIds) {
+  if (photoIds && !photoIds.length) return 0;
+  const rows = (await env.DB.prepare(
+    `SELECT f.id, f.status, f.lat, f.lng, f.accuracy_m, p.lat AS plat, p.lng AS plng, p.radius_m, p.id AS pid
+     FROM finds f JOIN photos p ON p.id = f.photo_id
+     WHERE f.game_id = ? AND f.status IN ('auto','pending','far') AND f.lat IS NOT NULL AND p.lat IS NOT NULL`
+  ).bind(gameId).all()).results.filter((r) => !photoIds || photoIds.includes(r.pid));
+  const updates = [];
+  for (const r of rows) {
+    const distance = Math.round(haversine(r.lat, r.lng, r.plat, r.plng));
+    const status = gpsVerdict(distance, r.radius_m, r.accuracy_m);
+    updates.push(env.DB.prepare('UPDATE finds SET status = ?, distance_m = ? WHERE id = ? AND judged_at IS NULL').bind(status, distance, r.id));
+  }
+  for (let i = 0; i < updates.length; i += 50) await env.DB.batch(updates.slice(i, i + 50));
+  return rows.length;
+}
+
 // Shared state for one game. Holds everything (locations, statuses); callers decide what each viewer may see.
 async function gameState(env, game) {
   // The cache entry is tied to the game row, so a reveal/hide/end seen by any request skips stale data.
@@ -279,8 +304,7 @@ async function player(request, env, url) {
 
     // Marked yes/no here, but the player only hears "submitted" until the reveal.
     const distance = Math.round(haversine(lat, lng, photo.lat, photo.lng));
-    const slack = Math.max(photo.radius_m * 2, photo.radius_m + Math.min(acc || 0, 60)); // poor GPS between tall buildings
-    const verdict = distance <= photo.radius_m ? 'auto' : distance <= slack ? 'pending' : 'far';
+    const verdict = gpsVerdict(distance, photo.radius_m, acc);
 
     const proofKey = await putImage(env, form.get('proof'), 'proof');
     const row = [id(), game.id, photo.id, me.team_id, me.id, lat, lng, acc, distance, proofKey, verdict, Math.min(takenAt, now())];
@@ -424,6 +448,19 @@ async function admin(request, env, url) {
       bust(game.id);
       return json({ ok: true, id: pid });
     }
+    if (method === 'PATCH' && !parts[1]) {
+      // Change the radius for every photo at once (or only one difficulty).
+      const b = await request.json();
+      const r = Math.round(Number(b.radius_m));
+      if (!Number.isFinite(r) || r < 5 || r > 500) return json({ error: 'Pick a radius between 5 and 500 meters.' }, 400);
+      const d = b.difficulty ? Number(b.difficulty) : null;
+      if (d !== null && ![1, 2, 3].includes(d)) return json({ error: 'Bad difficulty' }, 400);
+      const res = await env.DB.prepare(`UPDATE photos SET radius_m = ? WHERE game_id = ?${d ? ' AND difficulty = ?' : ''}`).bind(...[r, game.id, ...(d ? [d] : [])]).run();
+      const ids = (await env.DB.prepare(`SELECT id FROM photos WHERE game_id = ?${d ? ' AND difficulty = ?' : ''}`).bind(...[game.id, ...(d ? [d] : [])]).all()).results.map((x) => x.id);
+      const rechecked = await recheck(env, game.id, ids);
+      bust(game.id);
+      return json({ ok: true, photos: res.meta.changes, rechecked });
+    }
     if (method === 'PATCH') {
       const b = await request.json();
       const sets = [], vals = [];
@@ -446,8 +483,10 @@ async function admin(request, env, url) {
       if (b.difficulty !== undefined && b.points === undefined) { sets.push('points = ?'); vals.push(POINTS[b.difficulty] || 1); }
       if (!sets.length) return json({ error: 'Nothing to change' }, 400);
       await env.DB.prepare(`UPDATE photos SET ${sets.join(', ')} WHERE id = ? AND game_id = ?`).bind(...vals, parts[1], game.id).run();
+      // A new radius or a moved pin changes which answers are close enough.
+      const rechecked = (b.radius_m !== undefined || b.lat !== undefined || b.lng !== undefined) ? await recheck(env, game.id, [parts[1]]) : 0;
       bust(game.id);
-      return json({ ok: true });
+      return json({ ok: true, rechecked });
     }
     if (method === 'DELETE') {
       await env.DB.batch([
@@ -479,8 +518,7 @@ async function admin(request, env, url) {
         const f = await env.DB.prepare('SELECT f.distance_m, f.accuracy_m, p.radius_m FROM finds f JOIN photos p ON p.id = f.photo_id WHERE f.id = ? AND f.game_id = ?').bind(parts[1], game.id).first();
         if (!f) return json({ error: 'That photo is gone.' }, 404);
         if (f.distance_m == null) return json({ error: 'The judge added this one by hand. Remove it instead.' }, 400);
-        const slack = Math.max(f.radius_m * 2, f.radius_m + Math.min(f.accuracy_m || 0, 60));
-        const auto = f.distance_m <= f.radius_m ? 'auto' : f.distance_m <= slack ? 'pending' : 'far';
+        const auto = gpsVerdict(f.distance_m, f.radius_m, f.accuracy_m);
         await env.DB.prepare("UPDATE finds SET status = ?, judged_at = NULL WHERE id = ? AND game_id = ? AND status != 'replaced'").bind(auto, parts[1], game.id).run();
       } else {
         if (!['approved', 'rejected'].includes(status)) return json({ error: 'Bad status' }, 400);

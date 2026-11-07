@@ -229,6 +229,12 @@ body.admin input, body.admin select { min-height: 38px; }
 .filters button { min-height: 28px !important; font-size: .78em; padding: 0 .6em; border-width: 1px; font-weight: 400; }
 .filters button.on { background: var(--ink); color: var(--white); font-weight: 700; }
 .map-hint { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 800; background: var(--ink); color: var(--white); padding: .5em .9em; border-radius: var(--radius); display: flex; gap: .7em; align-items: center; font-size: .9em; white-space: nowrap; }
+.radius-bar { background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); padding: .6em .8em; }
+.radius-bar .unit input { min-height: 32px !important; }
+.radius-bar select { min-height: 32px !important; font-size: .9em; }
+.rad-pre { min-height: 30px !important; font-weight: 400; padding: 0 .55em; border-width: 1px; }
+.hint-rad { display: inline-flex; align-items: center; gap: .4em; padding: 0 .6em; border-left: 1px solid #555; border-right: 1px solid #555; }
+.hint-rad input[type=range] { width: 140px; min-height: 0; padding: 0; accent-color: var(--orange); }
 .map-hint button { min-height: 28px !important; font-size: .8em; padding: 0 .7em; border-color: var(--white); background: transparent; color: var(--white); }
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 1em; margin-bottom: 1em; }
 .stat { background: var(--white); border: 1px solid var(--line); border-radius: var(--radius); padding: .8em 1em; border-top: 6px solid var(--c, var(--line)); }
