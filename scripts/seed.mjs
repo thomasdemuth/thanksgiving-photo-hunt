@@ -54,7 +54,7 @@ for (const [i, n] of names.entries()) {
   const r = await pub('/api/join', { name: n, team_id: teams[i % 3].id });
   players.push({ ...r, team: i % 3 });
 }
-await admin('/game', 'PATCH', { action: 'start', minutes: 150 });
+await admin('/game', 'PATCH', { action: 'start', minutes: 150, countdown: 0 });
 st = await admin('/state');
 // Each team finds a random set; some overlap on purpose.
 for (const pl of players) {

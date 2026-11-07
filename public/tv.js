@@ -204,8 +204,13 @@
     let c;
     if (T.down) c = 'Reconnecting…';
     else if (g.status === 'setup') c = 'Starting soon';
+    else if (g.status === 'starting') {
+      const n = Math.ceil((g.started_at - (Date.now() + T.offset)) / 1000);
+      if (n <= 0) { g.status = 'live'; T.sig.over = null; renderOverlay(); c = ''; } // countdown over: open the map
+      else { c = `Starting in ${n}`; const el = $('#cdNum'); if (el && el.textContent !== String(n)) { el.textContent = n; el.classList.remove('tick'); void el.offsetWidth; el.classList.add('tick'); Sound.ding(n <= 3 ? 3 : 1); } }
+    }
     else if (g.status === 'ended') c = g.revealed ? 'Final results' : 'Time\'s up!';
-    else if (!g.ends_at) c = 'Game on!';
+    else if (!g.ends_at) c = '';
     else {
       const left = Math.max(0, g.ends_at - (Date.now() + T.offset));
       const m = Math.floor(left / 60000), h = Math.floor(m / 60), s = Math.floor(left / 1000) % 60;
@@ -290,7 +295,9 @@
   function renderOverlay() {
     const d = T.d, g = d.game;
     let html = '';
-    if (g.status === 'setup') {
+    if (g.status === 'starting') {
+      html = `<div class="map-over cd-over"><div><p>Get ready!</p><div class="tv-cd tick" id="cdNum">${Math.max(1, Math.ceil((g.started_at - (Date.now() + T.offset)) / 1000))}</div><p>The hunt starts in…</p></div></div>`;
+    } else if (g.status === 'setup') {
       const url = location.origin + '/';
       const q = qrcode(0, 'M'); q.addData(url); q.make();
       html = `<div class="map-over"><div><h1>Join the hunt!</h1><p>Point your phone's camera at the code.</p>

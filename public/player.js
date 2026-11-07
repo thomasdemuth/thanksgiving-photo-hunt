@@ -262,9 +262,10 @@
     $('#cam').onchange = onPhotoTaken;
     go('photos');
     poll();
-    setInterval(poll, POLL_MS);
+    // Check every 4 s, or every 1.5 s in the lobby so everyone's countdown starts together.
+    setInterval(() => { if (Date.now() - (S.lastPoll || 0) >= (phase() === 'lobby' ? 1500 : POLL_MS)) poll(); }, 500);
     setInterval(locTick, LOC_MS);
-    setInterval(renderClock, 1000);
+    setInterval(() => { renderClock(); renderScreen(); }, 250);
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) { stopWatch(); return; }
       poll(); locTick();
@@ -287,11 +288,12 @@
     window.scrollTo(0, 0);
   }
 
-  async function poll() {
+  async function poll(force) {
     if (!S.token) return;
     if (S.polling) { S.pollAgain = true; return; } // e.g. right after sending a photo: check again when this one finishes
-    if (document.hidden && S.data) return; // phone locked or app in the background
+    if (document.hidden && S.data && force !== true) return; // phone locked or app in the background
     S.polling = true;
+    S.lastPoll = Date.now();
     try {
       const body = S.fix && Date.now() - S.fix.at < 60000 ? { lat: S.fix.lat, lng: S.fix.lng, acc: S.fix.acc } : {};
       if (S.data && S.v) body.v = S.v; // "I already have this version"
@@ -303,6 +305,7 @@
         // Nothing changed: just move teammates' dots.
         S.data.mates = d.mates;
         if (S.view === 'map') updateMates();
+        renderScreen();
         if (wasOffline) renderTop();
       } else {
         S.data = d; S.v = d.v;
@@ -366,6 +369,7 @@
 
   function renderAll(force) {
     if (!S.data) return;
+    renderScreen();
     renderTop();
     const sig = JSON.stringify([S.data.finds.map((f) => [f.id, f.counted]), S.data.photos.map((p) => p.id + p.points + p.difficulty + (p.hint || '')),
       S.data.teams.map((t) => [t.score, t.submitted, t.name, t.roster]), S.data.game.status, S.data.game.revealed, S.filter, S.diff, S.sort, S.locDenied, store.get('queue', []).length]);
@@ -376,6 +380,81 @@
     if (S.view === 'map') updateMap();
   }
 
+  // ---------- full screens: lobby before the start, countdown, and "game over" ----------
+  // Which screen to show right now. Uses the server's clock, so every phone flips at the same moment.
+  function phase() {
+    const g = S.data?.game;
+    if (!g) return 'game';
+    const t = Date.now() + S.offset;
+    if (g.status === 'setup') return 'lobby';
+    if (g.status === 'ended' || (g.ends_at && t >= g.ends_at)) return 'over';
+    if (g.started_at && t < g.started_at) return 'countdown';
+    if (g.started_at && t < g.started_at + 1500) return 'go';
+    return 'game';
+  }
+
+  function renderScreen() {
+    if (!S.data) return;
+    const g = S.data.game, t = Date.now() + S.offset;
+    // The countdown just finished on this phone's clock: open the game now, without waiting for the next check.
+    if (g.status === 'starting' && t >= g.started_at) { g.status = 'live'; renderAll(true); return; }
+    const ph = phase();
+    let el = $('#screen');
+    if (ph === 'game') {
+      if (el) { el.remove(); document.body.classList.remove('locked'); }
+      S.screenSig = '';
+      return;
+    }
+    if (!el) { el = document.createElement('div'); el.id = 'screen'; document.body.appendChild(el); }
+    document.body.classList.add('locked'); // the game underneath can't scroll or be tapped
+    const me = S.data.me, team = myTeam(), color = team?.color || '#333';
+    let html = '', sig = '';
+    if (ph === 'lobby') {
+      sig = JSON.stringify(['lobby', me, S.data.teams.map((x) => [x.id, x.name, x.color, x.members]), S.switching]);
+      html = `<div class="lob">
+        <div class="lob-top"><span>🦃 ${esc(g.name)}</span></div>
+        <div class="lob-hero">
+          <div class="lob-badge" style="color:${esc(color)}">${esc((team?.name || '?')[0])}</div>
+          <p class="lob-you">You're <b>${esc(me.name)}</b> on the <b>${esc(team?.name || '')}</b> team</p>
+          <h1>Waiting for other players to join</h1>
+          <div class="lob-dots"><i></i><i></i><i></i></div>
+        </div>
+        <div class="lob-teams">${S.data.teams.map((x) => {
+          const mine = x.id === me.team_id;
+          return `<div class="lob-team ${mine ? 'mine' : ''}">
+            <div class="lob-th"><span class="swatch" style="background:${esc(x.color)}"></span><b>${esc(x.name)}</b><span class="muted small">${x.members.length}</span>
+              <span class="grow"></span>${mine ? '<span class="lob-here">Your team</span>' : `<button class="btn-small" data-switch="${esc(x.id)}" ${S.switching ? 'disabled' : ''}>Switch to ${esc(x.name)}</button>`}</div>
+            <div class="lob-members">${x.members.length ? x.members.map((n) => `<span class="chip ${mine && n === me.name ? 'me' : ''}">${esc(n)}${mine && n === me.name ? ' (you)' : ''}</span>`).join('') : '<span class="muted small">No one yet</span>'}</div>
+          </div>`;
+        }).join('')}</div>
+        <p class="lob-foot">The hunt starts when the host presses Start. Keep this screen open.</p>
+      </div>`;
+    } else if (ph === 'countdown' || ph === 'go') {
+      const n = Math.max(1, Math.ceil((g.started_at - t) / 1000));
+      sig = ph + (ph === 'go' ? '' : n) + color;
+      html = ph === 'go'
+        ? `<div class="cd"><div class="cd-n go">GO!</div><p>Happy hunting 🦃</p></div>`
+        : `<div class="cd"><p>Get ready!</p><div class="cd-n" key="${n}">${n}</div><p>The hunt starts in ${n} second${n === 1 ? '' : 's'}</p></div>`;
+      if (ph === 'go' && S.lastPh !== 'go' && navigator.vibrate) navigator.vibrate([150, 80, 300]);
+    } else {
+      const q = store.get('queue', []).length;
+      sig = 'over' + q;
+      html = `<div class="cd over"><div class="cd-icon">🏁</div><h1>Game over!</h1><p>See the results on the main screen.</p>
+        ${q ? `<p class="small">📶 Sending ${q} saved photo${q > 1 ? 's' : ''} when you have signal. Keep this open for a moment.</p>` : ''}</div>`;
+    }
+    S.lastPh = ph;
+    if (sig === S.screenSig) return;
+    S.screenSig = sig;
+    el.className = 'screen-full ' + ph;
+    el.style.background = ph === 'over' ? '#111' : color;
+    el.innerHTML = html;
+    el.querySelectorAll('[data-switch]').forEach((b) => b.onclick = async () => {
+      S.switching = true; renderScreen();
+      try { await api('/api/team', { team_id: b.dataset.switch }); } catch (e) { if (!e.handled) alert(e.message); }
+      S.switching = false; S.screenSig = ''; poll(true);
+    });
+  }
+
   function rankText(n) { const s = ['th', 'st', 'nd', 'rd'], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); }
 
   function clockState() {
@@ -383,7 +462,7 @@
     if (!g) return ['', ''];
     if (g.status === 'setup') return ['Starts soon', ''];
     if (g.status === 'ended') return ['Game over', 'over'];
-    if (!g.ends_at) return ['Game on', 'live'];
+    if (!g.ends_at) return ['', 'live'];
     const left = Math.max(0, g.ends_at - (Date.now() + S.offset));
     if (!left) return ['Game over', 'over'];
     const m = Math.floor(left / 60000), h = Math.floor(m / 60), s = Math.floor(left / 1000) % 60;
@@ -600,7 +679,7 @@
       return false;
     }
     showResult(r, attempt, fromQueue);
-    poll();
+    poll(true);
     return true;
   }
 

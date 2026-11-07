@@ -202,7 +202,20 @@ const tvr = await admin('/tv?since=0');
 t('game reset clears photos sent, scores and trails', st.finds.length === 0 && st.scores.every((x) => x.score === 0) && tvr.pings.length === 0, [st.finds.length, tvr.pings.length]);
 t('game reset keeps players and goes back to not started', st.players.length === playersBefore && st.game.status === 'setup' && !st.game.revealed_at && st.players.every((p) => p.last_lat == null));
 t('players stay signed in after a reset', (await post('/api/poll', {}, c.token)).status === 200);
+// Lobby and countdown
+const sw = await post('/api/team', { team_id: team.id }, c.token);
+st = await admin('/state');
+t('players can switch teams in the lobby', sw.ok && st.players.find((p) => p.name === 'Other').team_id === team.id, sw);
+await post('/api/team', { team_id: team2.id }, c.token);
 await admin('/game', 'PATCH', { action: 'start' });
+const pvS = await post('/api/poll', {}, c.token);
+t('start gives a 10 second countdown first', pvS.game.status === 'starting' && pvS.game.started_at - pvS.now > 8000 && pvS.game.started_at - pvS.now <= 10000, [pvS.game.status, pvS.game.started_at - pvS.now]);
+t('no photos during the countdown', (await send(c.token, rp)).result === 'not_started');
+t('teams are locked once the game starts', (await post('/api/team', { team_id: team.id }, c.token)).status === 400);
+t('starting again during the countdown is refused', (await admin('/game', 'PATCH', { action: 'start' })).status === 400);
+await new Promise((r) => setTimeout(r, 10300));
+const pvL = await post('/api/poll', { v: pvS.v }, c.token);
+t('after the countdown the game is live (phones get the change)', !pvL.same && pvL.game.status === 'live', pvL.game?.status);
 t('a reset game can start again and take photos', (await send(c.token, rp)).result === 'submitted');
 
 // Fresh game

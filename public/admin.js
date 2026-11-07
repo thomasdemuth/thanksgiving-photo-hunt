@@ -68,7 +68,7 @@
       <div class="wrap" id="body"></div>`;
     document.querySelectorAll('[data-tab]').forEach((b) => b.onclick = () => show(b.dataset.tab));
     await refresh();
-    show(['live', 'ended'].includes(A.d?.game?.status) ? 'live' : 'setup');
+    show(['live', 'starting', 'ended'].includes(A.d?.game?.status) ? 'live' : 'setup');
     // One refresh loop for the whole page; it pauses while signed out.
     if (!A.timer) A.timer = setInterval(() => {
       if (A.pw && A.d?.game && (A.tab === 'live' || A.tab === 'results') && !document.hidden) refresh().then(() => render()).catch(() => {});
@@ -80,7 +80,7 @@
   function renderStatus() {
     const g = A.d?.game;
     const waiting = (A.d?.finds || []).filter((f) => f.status === 'pending').length;
-    $('#status').innerHTML = g ? `${waiting ? `<button class="btn-small judge-pill" id="judgePill">⚖ ${waiting} to judge</button>` : ''}<a class="btn btn-small tv-link" href="/tv" target="_blank">📺 TV view</a> <span class="status ${g.status}">${{ setup: 'Not started', live: 'Live', ended: g.revealed_at ? 'Ended · results revealed' : 'Ended · results hidden' }[g.status]}</span>` : '';
+    $('#status').innerHTML = g ? `${waiting ? `<button class="btn-small judge-pill" id="judgePill">⚖ ${waiting} to judge</button>` : ''}<a class="btn btn-small tv-link" href="/tv" target="_blank">📺 TV view</a> <span class="status ${g.status}">${{ setup: 'Not started', starting: 'Starting…', live: 'Live', ended: g.revealed_at ? 'Ended · results revealed' : 'Ended · results hidden' }[g.status]}</span>` : '';
   }
 
   // Jump to the judge queue from anywhere.
@@ -597,6 +597,10 @@
         <p class="small muted" style="margin:0"><span id="joinedLine"></span> Scan the code to join.</p>
         <div><label for="mins" class="small">Game length in minutes (optional)</label><input id="mins" type="number" min="5" placeholder="No timer"></div>
         <button class="btn-ok btn-big" id="startBtn">▶ Start the game</button>`
+        : game.status === 'starting' ? `
+        <h2>Starting…</h2>
+        <p class="small muted" style="margin:0">Everyone's phone and the TV are counting down from 10. The hunt opens at ${new Date(game.started_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })}.</p>
+        <button class="btn-big btn-bad" id="endBtn">■ Stop</button>`
         : game.status === 'live' ? `
         <h2>The game is live</h2>
         <p class="small muted" style="margin:0">${game.ends_at ? `Ends at ${new Date(game.ends_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.` : 'No timer. End it when everyone is back.'}</p>
@@ -616,7 +620,7 @@
         try { await api('/game', 'PATCH', body()); await refresh(); } finally { btn.disabled = false; }
         after ? after() : render();
       });
-      act($('#startBtn'), () => ({ action: 'start', minutes: Number($('#mins').value) || null }), 'Start the game now?');
+      act($('#startBtn'), () => ({ action: 'start', minutes: Number($('#mins').value) || null }), 'Start the game? Everyone gets a 10-second countdown, then the hunt opens and teams are locked.');
       act($('#endBtn'), () => ({ action: 'end' }), 'End the game for everyone? Results stay hidden until you press Reveal.');
       act($('#reopenBtn'), () => ({ action: 'reopen' }), 'Reopen the game? Results will be hidden again.');
       act($('#revealBtn'), () => ({ action: 'reveal' }), waiting ? `${waiting} answer${waiting > 1 ? 's are' : ' is'} still waiting for the judge and won't count. Reveal anyway?` : 'Reveal the results to everyone now?');

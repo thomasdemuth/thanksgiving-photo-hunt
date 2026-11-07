@@ -113,3 +113,8 @@ body.tv-page.idle, body.tv-page.idle * { cursor: none !important; }
 .sound-hint { position: fixed; left: 1em; bottom: 1em; z-index: 3500; background: var(--ink); color: #fff; padding: .5em .9em; border-radius: var(--radius); font-size: .95em; }
 
 .tv-login { max-width: 380px; margin: 14vh auto; }
+
+/* Countdown on the TV after the host presses Start */
+.tv-cd { font-size: 10em; font-weight: 700; line-height: 1; color: var(--orange); }
+.tv-cd.tick { animation: cdtick .9s ease-out; }
+@keyframes cdtick { from { transform: scale(1.5); opacity: .3; } 40% { transform: scale(1); opacity: 1; } }

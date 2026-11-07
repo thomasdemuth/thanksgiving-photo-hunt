@@ -9,7 +9,8 @@ const POINTS = { 1: 1, 2: 2, 3: 3 };
 // Christopher St (Greenwich to 6th Ave), 6th Ave (Christopher to Canal). Traced from OpenStreetMap.
 const DEFAULT_BOUNDARY = [[40.721882,-74.005355],[40.723845,-74.008033],[40.724026,-74.008445],[40.724495,-74.008916],[40.724597,-74.00921],[40.724722,-74.009309],[40.726,-74.0091],[40.7296,-74.0084],[40.732877,-74.007514],[40.734146,-73.999182],[40.729621,-74.002232],[40.72212,-74.005379]];
 const STATE_TTL_MS = 60000; // safety net only: the cache is keyed on the game's version
-const PING_EVERY_MS = 12000; // how often a phone's location is saved (teammates and the TV see it)
+const PING_EVERY_MS = 12000;
+const COUNTDOWN_MS = 10000; // "Get ready… 10, 9, 8…" on every phone and the TV before the hunt opens // how often a phone's location is saved (teammates and the TV see it)
 
 // Per-isolate cache of the shared game state, so a burst of polls costs one set of reads.
 const stateCache = new Map();
@@ -80,7 +81,9 @@ async function currentGame(env) {
 }
 
 // A game counts as live only between Start and End (or the end time passing).
+// setup → starting (10 s countdown) → live → ended
 function effectiveStatus(game) {
+  if (game.status === 'live' && game.started_at && now() < game.started_at) return 'starting';
   if (game.status === 'live' && game.ends_at && now() > game.ends_at) return 'ended';
   return game.status;
 }
@@ -234,6 +237,21 @@ async function player(request, env, url) {
     return json({ matches: rows.results });
   }
 
+  // Switch teams in the lobby. Once the game starts, teams are locked (the host can still move people).
+  if (path === '/api/team' && method === 'POST') {
+    const me = await playerFromToken(env, request);
+    if (!me) return json({ error: 'not_joined' }, 401);
+    const game = await currentGame(env);
+    if (!game || game.id !== me.game_id) return json({ error: 'not_joined' }, 401);
+    if (effectiveStatus(game) !== 'setup') return json({ error: 'The game has started, so teams are locked.' }, 400);
+    const { team_id } = await request.json().catch(() => ({}));
+    const team = await env.DB.prepare('SELECT id FROM teams WHERE id = ? AND game_id = ?').bind(team_id, game.id).first();
+    if (!team) return json({ error: 'Please pick a team.' }, 400);
+    await env.DB.prepare('UPDATE players SET team_id = ? WHERE id = ?').bind(team.id, me.id).run();
+    await bump(env, game.id);
+    return json({ ok: true });
+  }
+
   if (path === '/api/join' && method === 'POST') {
     const { name, team_id, player_id } = await request.json();
     const game = await currentGame(env);
@@ -303,7 +321,7 @@ async function player(request, env, url) {
     const game = await currentGame(env);
     if (!game || game.id !== me.game_id) return json({ error: 'not_joined' }, 401);
     const status = effectiveStatus(game);
-    if (status === 'setup') return json({ result: 'not_started' });
+    if (status === 'setup' || status === 'starting') return json({ result: 'not_started' });
     // A check-in saved offline before the end still counts if it arrives within 30 minutes.
     // Clamp the phone's timestamp so it can't be backdated to win a tie-break.
     const takenAt = Math.min(now(), Math.max(now() - 30 * 60000, Number(form.get('at')) || now()));
@@ -407,8 +425,10 @@ async function admin(request, env, url) {
     if (b.boundary !== undefined) { sets.push('boundary_geojson = ?'); vals.push(b.boundary ? JSON.stringify(b.boundary === 'default' ? DEFAULT_BOUNDARY : b.boundary) : null); }
     if (b.action === 'start') {
       // Starting twice would reset the clock, so only start a game that isn't live.
-      if (effectiveStatus(game) === 'live') return json({ error: 'The game is already live.' }, 400);
-      sets.push("status = 'live'", 'started_at = ?', 'ends_at = ?', 'revealed_at = NULL'); vals.push(now(), b.minutes ? now() + b.minutes * 60000 : null);
+      if (['live', 'starting'].includes(effectiveStatus(game))) return json({ error: 'The game is already live.' }, 400);
+      // The hunt opens after the countdown; the timer (if any) runs from then.
+      const opens = now() + (b.countdown === 0 ? 0 : COUNTDOWN_MS); // countdown: 0 is for test scripts
+      sets.push("status = 'live'", 'started_at = ?', 'ends_at = ?', 'revealed_at = NULL'); vals.push(opens, b.minutes ? opens + b.minutes * 60000 : null);
     }
     if (b.action === 'end') { sets.push("status = 'ended'", 'ends_at = ?'); vals.push(Math.min(now(), game.ends_at || Infinity)); }
     if (b.action === 'reopen') { sets.push("status = 'live'", 'ends_at = NULL', 'revealed_at = NULL'); }
