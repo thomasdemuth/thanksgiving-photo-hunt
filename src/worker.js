@@ -377,6 +377,15 @@ async function admin(request, env, url) {
       sets.push('revealed_at = ?'); vals.push(now());
     }
     if (b.action === 'hide') { sets.push('revealed_at = NULL'); }
+    if (b.action === 'reset') {
+      // Play again with the same players, teams and photos: clear every photo sent and all trails.
+      await env.DB.batch([
+        env.DB.prepare('DELETE FROM finds WHERE game_id = ?').bind(game.id),
+        env.DB.prepare('DELETE FROM pings WHERE game_id = ?').bind(game.id),
+        env.DB.prepare('UPDATE players SET last_lat = NULL, last_lng = NULL, last_accuracy = NULL, last_seen_at = NULL WHERE game_id = ?').bind(game.id),
+      ]);
+      sets.push("status = 'setup'", 'started_at = NULL', 'ends_at = NULL', 'revealed_at = NULL');
+    }
     if (!sets.length) return json({ error: 'Nothing to change' }, 400);
     await env.DB.prepare(`UPDATE games SET ${sets.join(', ')} WHERE id = ?`).bind(...vals, game.id).run();
     bust(game.id);
@@ -465,8 +474,18 @@ async function admin(request, env, url) {
       }
     } else if (method === 'PATCH') {
       const { status } = await request.json();
-      if (!['approved', 'rejected'].includes(status)) return json({ error: 'Bad status' }, 400);
-      await env.DB.prepare("UPDATE finds SET status = ?, judged_at = ? WHERE id = ? AND game_id = ? AND status != 'replaced'").bind(status, now(), parts[1], game.id).run();
+      if (status === 'reset') {
+        // Undo the judge: back to what the GPS said when the photo was taken.
+        const f = await env.DB.prepare('SELECT f.distance_m, f.accuracy_m, p.radius_m FROM finds f JOIN photos p ON p.id = f.photo_id WHERE f.id = ? AND f.game_id = ?').bind(parts[1], game.id).first();
+        if (!f) return json({ error: 'That photo is gone.' }, 404);
+        if (f.distance_m == null) return json({ error: 'The judge added this one by hand. Remove it instead.' }, 400);
+        const slack = Math.max(f.radius_m * 2, f.radius_m + Math.min(f.accuracy_m || 0, 60));
+        const auto = f.distance_m <= f.radius_m ? 'auto' : f.distance_m <= slack ? 'pending' : 'far';
+        await env.DB.prepare("UPDATE finds SET status = ?, judged_at = NULL WHERE id = ? AND game_id = ? AND status != 'replaced'").bind(auto, parts[1], game.id).run();
+      } else {
+        if (!['approved', 'rejected'].includes(status)) return json({ error: 'Bad status' }, 400);
+        await env.DB.prepare("UPDATE finds SET status = ?, judged_at = ? WHERE id = ? AND game_id = ? AND status != 'replaced'").bind(status, now(), parts[1], game.id).run();
+      }
     } else if (method === 'DELETE') {
       await env.DB.prepare('DELETE FROM finds WHERE id = ? AND game_id = ?').bind(parts[1], game.id).run();
     }

@@ -98,11 +98,11 @@
     const gid = S.data?.game?.id;
     // Walked trail, only while the game is on. Skip fuzzy fixes so the line doesn't zigzag.
     if (gid && S.data.game.status === 'live' && fix.acc <= 50) {
-      const trail = store.get('trail-' + gid, []);
+      const trail = store.get(trailKey(), []);
       const last = trail[trail.length - 1];
       if (!last || dist(last[0], last[1], fix.lat, fix.lng) > 12) {
         trail.push([+fix.lat.toFixed(6), +fix.lng.toFixed(6)]); if (trail.length > 3000) trail.shift();
-        store.set('trail-' + gid, trail);
+        store.set(trailKey(), trail);
         if (S.view === 'map') drawTrail();
       }
     }
@@ -122,6 +122,9 @@
     if (S.watch == null) return;
     navigator.geolocation.clearWatch(S.watch); S.watch = null;
   }
+
+  // One trail per round: a reset (or a new game) starts a fresh line.
+  const trailKey = () => `trail-${S.data.game.id}-${S.data.game.started_at || 0}`;
 
   function dist(a, b, c, d) {
     const r = Math.PI / 180, x = (d - b) * r * Math.cos(((a + c) / 2) * r), y = (c - a) * r;
@@ -538,7 +541,7 @@
       return;
     }
     // "at" is in server time so a check-in sent late (no signal) still counts if it was taken before the end.
-    const attempt = { id: Date.now() + '-' + Math.random().toString(36).slice(2, 7), photo_id: S.pending.photo_id, lat: fix.lat, lng: fix.lng, acc: fix.acc, replace: S.pending.replace ? 1 : 0, proof: proof ? await blobToDataUrl(proof) : null, at: Date.now() + S.offset };
+    const attempt = { id: Date.now() + '-' + Math.random().toString(36).slice(2, 7), photo_id: S.pending.photo_id, lat: fix.lat, lng: fix.lng, acc: fix.acc, replace: S.pending.replace ? 1 : 0, proof: proof ? await blobToDataUrl(proof) : null, at: Date.now() + S.offset, round: S.data.game.started_at || 0 };
     send(attempt);
   }
 
@@ -578,6 +581,11 @@
       for (;;) {
         const next = store.get('queue', [])[0];
         if (!next) break;
+        // Saved before the admin reset the game: that round is over, so drop it.
+        if (S.data && next.round !== undefined && next.round !== (S.data.game.started_at || 0)) {
+          store.set('queue', store.get('queue', []).filter((a) => a.id !== next.id));
+          continue;
+        }
         const ok = await send(next, true);
         if (!ok) break;
         // Re-read before removing, in case a new check-in was queued while this one was sending.
@@ -720,7 +728,7 @@
   // Strava-style line of where this phone has walked during the game.
   function drawTrail() {
     if (!S.map || !S.data) return;
-    const t = store.get('trail-' + S.data.game.id, []);
+    const t = store.get(trailKey(), []);
     const line = t.length > 1 ? t : [];
     if (!S.trailLine) {
       S.trailCase = L.polyline([], { color: '#fff', weight: 8, opacity: 0.9, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(S.layers.trail);

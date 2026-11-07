@@ -4,13 +4,14 @@ Phone website for a neighborhood photo scavenger hunt. Players find the spot in 
 
 - Player: https://photo-hunt.twmdemuth.workers.dev
 - Admin: https://photo-hunt.twmdemuth.workers.dev/admin (password in `admin-password.txt`, not committed)
-- TV at home base: https://photo-hunt.twmdemuth.workers.dev/tv (same password). Live map with trails, every photo and judge's call, scores, and the final reveal. Keys: F full screen, H hide points ("no spoilers"), R replay the reveal.
+- TV at home base: https://photo-hunt.twmdemuth.workers.dev/tv (same password). Map of where everyone is, one column per team with every photo they sent (right/wrong and how far off), a big pop-up for each new photo, and a step-by-step final reveal with sound. ⚙ Settings: no spoilers, pop-ups, trails, names, sound. Click the page once so the browser allows sound. Keys: F full screen, H no spoilers, R replay the reveal.
 
 ## How a game runs
 1. Admin: Start the game. Players scan the QR code, pick a team, and hunt.
 2. Players send a picture + location for each spot. They see only "Sent", how many photos each team and person has sent, teammates on the map, and "Red team found something!" pop-ups.
 3. Server marks each answer: within the photo's radius = yes; close call = judge queue; far = no (the judge can still approve it). "Submit again" replaces a team's answer; only the newest counts.
 4. Admin: End the game, clear the judge queue, then press Reveal results. Phones and the TV show the scores.
+5. The admin can change any call at any time (Yes / No / Reset to what GPS said). After the game, "Reset and play again" clears every photo sent and all trails but keeps players, teams and photos.
 
 ## Stack
 Cloudflare Worker (`src/worker.js`) serving static files from `public/` plus a JSON API. D1 for data (`schema.sql`), Workers KV for photos (swap to R2 later: change `putImage`/`serveImage` and the binding).

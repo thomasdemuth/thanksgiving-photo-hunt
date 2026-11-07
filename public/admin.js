@@ -72,7 +72,7 @@
     // One refresh loop for the whole page; it pauses while signed out.
     if (!A.timer) A.timer = setInterval(() => {
       if (A.pw && A.d?.game && (A.tab === 'live' || A.tab === 'results') && !document.hidden) refresh().then(() => render()).catch(() => {});
-    }, 5000);
+    }, 3000); // every 3 seconds, so the judge sees photos as they arrive
   }
 
   async function refresh() { A.d = await api('/state'); renderStatus(); }
@@ -403,7 +403,8 @@
               <div style="width:130px;text-align:center"><div class="qr">${qrSvg(playerUrl)}</div><button class="btn-small" id="tvBtn" style="margin-top:.4em;width:100%">Big join code</button><a class="btn btn-small" href="/tv" target="_blank" style="margin-top:.3em;width:100%">📺 Live TV view</a></div>
             </div></div>
             <div class="card"><h2>Judge queue <span class="count" id="jCount">0</span></h2><p class="small muted" style="margin:-.2em 0 .6em">Players never see yes or no until you reveal the results.</p><div id="judge"></div><div id="farList"></div></div>
-            <div class="card"><h2>Activity</h2><div id="manual"></div><div class="feed" id="feed"></div></div>
+            <div class="card"><h2>Every photo sent <span class="count" id="fCount"></span></h2><p class="small muted" style="margin:-.2em 0 .5em">Change any call at any time with Yes, No, or Reset (back to what the GPS said).</p>
+              <div class="filters" id="fFilters" style="margin:0 0 .5em"></div><div id="manual"></div><div class="feed" id="feed"></div></div>
           </div>
           <div class="stack">
             <div class="card"><h2>Where everyone is</h2><div id="liveMap"></div></div>
@@ -437,9 +438,10 @@
         <h2>The game is over</h2>
         <p class="small muted" style="margin:0">Players can't see the results yet.${waiting ? ` <b class="error">${waiting} still waiting for the judge</b>, and they won't count unless approved.` : ''} Photos taken before the end can still arrive for 30 minutes.</p>
         <button class="btn-ok btn-big" id="revealBtn">🎉 Reveal the results</button>
-        <div class="row"><button class="btn-small" id="reopenBtn">Reopen the game</button><button class="btn-small" id="setupBtn">Back to not started</button></div>`
+        <div class="row"><button class="btn-small" id="reopenBtn">Reopen the game</button><button class="btn-small btn-bad" id="resetBtn">↺ Reset the game</button></div>`
         : `<h2>Results revealed</h2>
         <p class="small muted" style="margin:0">Everyone can see the scores and what counted, on their phones and the TV.</p>
+        <button class="btn-big btn-bad" id="resetBtn">↺ Reset and play again</button>
         <div class="row"><button class="btn-small" id="hideBtn">Hide the results again</button><button class="btn-small" id="reopenBtn">Reopen the game</button></div>`;
       const act = (btn, body, ask, after) => btn && (btn.onclick = async () => {
         if (ask && !confirm(ask)) return;
@@ -452,7 +454,7 @@
       act($('#reopenBtn'), () => ({ action: 'reopen' }), 'Reopen the game? Results will be hidden again.');
       act($('#revealBtn'), () => ({ action: 'reveal' }), waiting ? `${waiting} answer${waiting > 1 ? 's are' : ' is'} still waiting for the judge and won't count. Reveal anyway?` : 'Reveal the results to everyone now?');
       act($('#hideBtn'), () => ({ action: 'hide' }));
-      act($('#setupBtn'), () => ({ action: 'setup' }), 'Go back to "not started"? Finds stay, but the timer resets.');
+      act($('#resetBtn'), () => ({ action: 'reset' }), 'Reset the game?\n\nThis deletes every photo sent, all scores and all trails. Players, teams and the hunt photos stay, so everyone can play again without rejoining. This can\'t be undone.\n\n(Tip: download the results CSV first if you want to keep them.)');
     }
     const jl = $('#joinedLine'); if (jl) jl.textContent = `${photos.length} photos · ${players.length} players joined.`;
 
@@ -506,19 +508,41 @@
       };
     }
 
-    // Feed
-    if (changed('feed', finds.map((f) => f.id + f.status).join() + Math.floor(A.d.now / 60000))) $('#feed').innerHTML = finds.length ? finds.slice(0, 60).map((f) => {
-      const p = photoOf(f.photo_id), t = teamOf(f.team_id), pl = playerOf(f.player_id);
-      const label = { auto: 'Yes · on the spot', approved: 'Yes · judge', pending: 'Waiting for judge', far: 'No · too far', rejected: 'No · judge' }[f.status] || f.status;
-      const yes = f.status === 'auto' || f.status === 'approved';
-      return `<div class="feed-item"><img src="/img/${esc(f.proof_key || p?.thumb_key)}" alt="" loading="lazy">
-        <div class="grow small"><b>${esc(pl?.name || 'Judge')}</b> <span class="swatch" style="background:${esc(t?.color)}"></span> ${esc(t?.name)} · #${numOf(f.photo_id)} <span class="muted">(${DIFF[p?.difficulty] || ''})</span><br>
-        <span class="tag ${f.status}">${label}</span> <span class="muted">${f.distance_m != null ? Math.round(f.distance_m) + ' m · ' : ''}${ago(f.created_at)}</span></div>
-        ${f.status !== 'pending' ? `<button class="btn-small flip" data-flip="${f.id}" data-s="${yes ? 'rejected' : 'approved'}" title="Change the judge's call">${yes ? 'Make it no' : 'Make it yes'}</button>` : ''}
-        <button class="x-btn" data-fdel="${f.id}" title="Remove this find">✕</button></div>`;
-    }).join('') : '<p class="muted small" style="margin:0">No check-ins yet.</p>';
-    document.querySelectorAll('[data-flip]').forEach((b) => b.onclick = async () => { b.disabled = true; try { await api('/finds/' + b.dataset.flip, 'PATCH', { status: b.dataset.s }); } finally { await refresh(); render(); } });
-    document.querySelectorAll('[data-fdel]').forEach((b) => b.onclick = async () => { if (!confirm('Remove this find?')) return; await api('/finds/' + b.dataset.fdel, 'DELETE'); await refresh(); render(); });
+    // Every photo sent, newest first. The judge can say yes/no or reset any of them at any time.
+    const FILTERS = { all: 'All', wait: 'Waiting for judge', yes: 'Counted', no: "Didn't count" };
+    const match = (k, f) => k === 'wait' ? f.status === 'pending' : k === 'yes' ? ['auto', 'approved'].includes(f.status) : k === 'no' ? ['far', 'rejected'].includes(f.status) : true;
+    const inF = (f) => match(A.ff, f);
+    A.ff ||= 'all';
+    $('#fCount').textContent = finds.length;
+    if (changed('ffilters', A.ff + finds.map((f) => f.status).join())) {
+      $('#fFilters').innerHTML = Object.entries(FILTERS).map(([k, v]) => `<button data-ff="${k}" class="${A.ff === k ? 'on' : ''}">${v} · ${finds.filter((f) => match(k, f)).length}</button>`).join('');
+      document.querySelectorAll('[data-ff]').forEach((b) => b.onclick = () => { A.ff = b.dataset.ff; A.sig.feed = null; A.sig.ffilters = null; render(); });
+    }
+    if (changed('feed', A.ff + finds.map((f) => f.id + f.status).join() + Math.floor(A.d.now / 60000))) {
+      const list = finds.filter(inF);
+      $('#feed').innerHTML = list.length ? list.slice(0, 80).map((f) => {
+        const p = photoOf(f.photo_id), t = teamOf(f.team_id), pl = playerOf(f.player_id);
+        const label = { auto: 'Yes · right spot', approved: 'Yes · judge', pending: 'Waiting for judge', far: 'No · too far', rejected: 'No · judge' }[f.status] || f.status;
+        const yes = f.status === 'auto' || f.status === 'approved', no = f.status === 'far' || f.status === 'rejected';
+        const canReset = f.distance_m != null && (f.status === 'approved' || f.status === 'rejected');
+        return `<div class="feed-item judge-row">
+          <a href="/img/${esc(p?.image_key)}" target="_blank" title="The photo"><img src="/img/${esc(p?.thumb_key)}" alt="" loading="lazy"></a>
+          ${f.proof_key ? `<a href="/img/${esc(f.proof_key)}" target="_blank" title="Their picture"><img src="/img/${esc(f.proof_key)}" alt="" loading="lazy"></a>` : '<span class="nopic-sm">No pic</span>'}
+          <div class="grow small"><b>${esc(pl?.name || 'Judge')}</b> <span class="swatch" style="background:${esc(t?.color)}"></span> ${esc(t?.name)} · #${numOf(f.photo_id)} <span class="muted">(${DIFF[p?.difficulty] || ''})</span><br>
+            <span class="tag ${f.status}">${label}</span> <span class="muted">${f.distance_m != null ? Math.round(f.distance_m * 3.28) + ' ft away · ' : ''}${ago(f.created_at)}</span></div>
+          <div class="jbtns">
+            <button class="btn-small ${yes ? 'on-yes' : ''}" data-flip="${f.id}" data-s="approved" ${yes ? 'disabled' : ''}>✓ Yes</button>
+            <button class="btn-small ${no ? 'on-no' : ''}" data-flip="${f.id}" data-s="rejected" ${no ? 'disabled' : ''}>✕ No</button>
+            ${canReset ? `<button class="btn-small" data-flip="${f.id}" data-s="reset" title="Back to what the GPS said">↺ Reset</button>` : ''}
+          </div>
+          <button class="x-btn" data-fdel="${f.id}" title="Delete this photo">🗑</button></div>`;
+      }).join('') : `<p class="muted small" style="margin:0">${finds.length ? 'None here.' : 'No photos sent yet.'}</p>`;
+      document.querySelectorAll('[data-flip]').forEach((b) => b.onclick = async () => {
+        b.closest('.feed-item').querySelectorAll('button').forEach((x) => { x.disabled = true; });
+        try { await api('/finds/' + b.dataset.flip, 'PATCH', { status: b.dataset.s }); } finally { await refresh(); render(); }
+      });
+      document.querySelectorAll('[data-fdel]').forEach((b) => b.onclick = async () => { if (!confirm('Delete this photo? The team can send it again.')) return; await api('/finds/' + b.dataset.fdel, 'DELETE'); await refresh(); render(); });
+    }
 
     // Live map
     A.liveLayer.clearLayers();

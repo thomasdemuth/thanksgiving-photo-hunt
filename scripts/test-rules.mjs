@@ -140,6 +140,28 @@ t('radius 0 rejected', v1.status === 400, v1);
 const v2 = await admin('/photos/' + p7.id, 'PATCH', { points: '' });
 t('empty points rejected', v2.status === 400, v2);
 
+// Reset one judge call, then reset the whole game
+await admin('/game', 'PATCH', { action: 'reopen' });
+const rp = st.photos.filter((p) => p.lat != null && !st.finds.some((f) => f.team_id === team2.id && f.photo_id === p.id))[0];
+await send(c.token, rp, 0.003);
+st = await admin('/state');
+const rf = active(st, team2.id, rp.id)[0];
+await admin('/finds/' + rf.id, 'PATCH', { status: 'approved' });
+await admin('/finds/' + rf.id, 'PATCH', { status: 'reset' });
+st = await admin('/state');
+t('reset puts a judged photo back to what GPS said', active(st, team2.id, rp.id)[0].status === 'far' && !active(st, team2.id, rp.id)[0].judged_at, active(st, team2.id, rp.id));
+const playersBefore = st.players.length;
+await admin('/game', 'PATCH', { action: 'end' });
+await admin('/game', 'PATCH', { action: 'reveal' });
+await admin('/game', 'PATCH', { action: 'reset' });
+st = await admin('/state');
+const tvr = await admin('/tv?since=0');
+t('game reset clears photos sent, scores and trails', st.finds.length === 0 && st.scores.every((x) => x.score === 0) && tvr.pings.length === 0, [st.finds.length, tvr.pings.length]);
+t('game reset keeps players and goes back to not started', st.players.length === playersBefore && st.game.status === 'setup' && !st.game.revealed_at && st.players.every((p) => p.last_lat == null));
+t('players stay signed in after a reset', (await post('/api/poll', {}, c.token)).status === 200);
+await admin('/game', 'PATCH', { action: 'start' });
+t('a reset game can start again and take photos', (await send(c.token, rp)).result === 'submitted');
+
 // Fresh game
 await admin('/teams/' + team.id, 'PATCH', { name: 'Turkeys' });
 await admin('/game', 'POST', { name: 'Test Hunt' });

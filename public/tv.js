@@ -1,9 +1,9 @@
-// TV view for home base: live map, every submission and judge's call, scores, and the final reveal.
+// TV view for home base. Kept calm and simple: a map of where everyone is, one column per team
+// showing the photos they've sent, and a big pop-up whenever a new photo comes in.
 // Uses the admin password (shared with /admin on this browser).
 (() => {
   const POLL_MS = 4000;
-  const SPOT_MS = 8000;      // how long a new submission stays on screen
-  const JUDGE_MS = 4500;
+  const POP_MS = 9000;       // how long a new photo stays on screen
   const STALE_MS = 5 * 60000;
   const DIFF = { 1: 'Easy', 2: 'Medium', 3: 'Hard' };
   // Same base map as the player and admin pages, with the OpenStreetMap backup.
@@ -25,15 +25,21 @@
     });
   }
 
+  // Settings, remembered on this TV.
+  const SETTINGS = {
+    noSpoilers: { label: 'No spoilers', help: 'Hide points, right/wrong and distances until you reveal the results.', def: false },
+    popups: { label: 'Pop up new photos', help: 'Show each new photo big in the middle of the screen.', def: true },
+    trails: { label: 'Walking trails', help: 'Draw the path each player has walked.', def: true },
+    names: { label: 'Names on the map', help: 'Label each player\'s dot with their name.', def: true },
+    sound: { label: 'Sound', help: 'A chime for new photos, and drumrolls and music for the final reveal.', def: true },
+  };
+  const opt = (k) => { const v = localStorage.getItem('tv-' + k); return v === null ? SETTINGS[k].def : v === '1'; };
+  const setOpt = (k, v) => localStorage.setItem('tv-' + k, v ? '1' : '0');
+
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const T = {
-    pw: localStorage.getItem('adminPw'), d: null, offset: 0, gameId: null,
-    pings: {}, lastPing: 0, seen: null, queue: [], showing: false,
-    // "No spoilers" hides points and yes/no until the reveal, if players might glance at the TV.
-    noSpoilers: localStorage.getItem('tvNoSpoilers') === '1',
-    revealShownFor: null, map: null, L: null, markers: {}, trails: {}, sig: {},
-  };
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const T = { pw: localStorage.getItem('adminPw'), d: null, offset: 0, gameKey: null, pings: {}, lastPing: 0, seen: null, queue: [], showing: false, revealShownFor: null, map: null, L: null, markers: {}, trails: {}, sig: {} };
 
   async function api(path) {
     const res = await fetch('/api/admin' + path, { headers: { 'x-admin': T.pw || '' } });
@@ -44,7 +50,6 @@
 
   function login(err) {
     clearInterval(T.timer); T.timer = null;
-    document.body.classList.remove('idle');
     $('#app').innerHTML = `
       <div class="tv-login card stack">
         <h1 class="center">📺 Photo Hunt TV</h1>
@@ -64,48 +69,57 @@
     $('#app').innerHTML = `
       <div class="tv-shell">
         <header class="tv-top">
-          <span class="pill" id="pill">…</span>
           <span class="tv-title" id="title">🦃 Photo Hunt</span>
-          <span class="tv-sub" id="sub"></span>
+          <span class="tv-status" id="status"></span>
           <span class="tv-clock" id="clock"></span>
-          <button class="tv-btn" id="spoilBtn" title="Hide points and yes/no until the reveal (key: H)"></button>
-          <button class="tv-btn" id="fsBtn" title="Full screen (key: F)">⛶ Full screen</button>
+          <button class="tv-gear" id="gear">⚙ Settings</button>
         </header>
         <div class="tv-main">
-          <div class="tv-map-wrap"><div id="tvMap"></div><div id="over"></div><div id="spot"></div></div>
-          <aside class="tv-side">
-            <div class="tv-h"><span id="boardTitle">Scoreboard</span><span id="boardNote"></span></div>
-            <div id="board"></div>
-            <div class="tv-h" style="margin-top:.4em"><span>Live feed</span><span id="feedCount"></span></div>
-            <div class="tv-feed" id="feed"></div>
-          </aside>
+          <div class="tv-map-wrap"><div id="tvMap"></div><div id="over"></div></div>
+          <div class="tv-teams" id="teams"></div>
         </div>
-        <footer class="tv-ticker"><span class="lbl">LATEST</span><div class="track"><div class="run" id="ticker"></div></div></footer>
       </div>`;
-    T.map = L.map('tvMap', { zoomControl: false, zoomSnap: 0.25, attributionControl: true }).setView([40.728, -74.005], 15);
+    T.map = L.map('tvMap', { zoomControl: false, zoomSnap: 0.25 }).setView([40.728, -74.005], 15);
     addBaseMap(T.map);
-    T.L = { area: L.layerGroup().addTo(T.map), subs: L.layerGroup().addTo(T.map), trails: L.layerGroup().addTo(T.map), players: L.layerGroup().addTo(T.map), fx: L.layerGroup().addTo(T.map) };
-    T.markers = {}; T.trails = {}; T.sig = {}; T.fitted = false;
-    $('#fsBtn').onclick = fullscreen;
-    $('#spoilBtn').onclick = toggleSpoilers;
-    renderSpoilBtn();
+    T.L = { area: L.layerGroup().addTo(T.map), trails: L.layerGroup().addTo(T.map), players: L.layerGroup().addTo(T.map) };
+    T.markers = {}; T.trails = {}; T.sig = {};
+    $('#gear').onclick = (e) => { e.stopPropagation(); toggleSettings(); };
     tick();
+    soundHint();
     clearInterval(T.timer); T.timer = setInterval(tick, POLL_MS);
     if (!T.clockTimer) T.clockTimer = setInterval(renderClock, 1000);
   }
   window.addEventListener('resize', () => { if (T.map) { T.map.invalidateSize(); fit(); } });
 
+  // ---------- settings ----------
+  function toggleSettings() {
+    if ($('#settings')) { $('#settings').remove(); return; }
+    const box = document.createElement('div');
+    box.className = 'settings'; box.id = 'settings';
+    box.onclick = (e) => e.stopPropagation();
+    box.innerHTML = `<h3>TV settings</h3>
+      ${Object.entries(SETTINGS).map(([k, s]) => `<label><input type="checkbox" data-opt="${k}" ${opt(k) ? 'checked' : ''}><span><b>${s.label}</b><span>${s.help}</span></span></label>`).join('')}
+      <div class="row"><button id="fsBtn">⛶ Full screen</button>${T.d?.game?.revealed ? '<button id="rvBtn">🏆 Show results again</button>' : ''}</div>
+      <p class="small muted" style="margin:.6em 0 0">Keys: F full screen, H no spoilers, R show results again.</p>`;
+    document.body.appendChild(box);
+    box.querySelectorAll('[data-opt]').forEach((c) => c.onchange = () => { setOpt(c.dataset.opt, c.checked); applySettings(); });
+    $('#fsBtn').onclick = fullscreen;
+    const rv = $('#rvBtn'); if (rv) rv.onclick = () => { box.remove(); showReveal(); };
+  }
+  document.addEventListener('click', () => $('#settings')?.remove());
+  function applySettings() {
+    T.sig = {};
+    T.L?.trails.clearLayers(); T.trails = {};
+    T.L?.players.clearLayers(); T.markers = {};
+    if (!opt('popups')) T.queue = [];
+    soundHint();
+    if (T.d) render();
+  }
   function fullscreen() {
     if (document.fullscreenElement) document.exitFullscreen?.();
     else document.documentElement.requestFullscreen?.().catch(() => {});
   }
-  function toggleSpoilers() {
-    T.noSpoilers = !T.noSpoilers;
-    localStorage.setItem('tvNoSpoilers', T.noSpoilers ? '1' : '0');
-    renderSpoilBtn(); T.sig = {}; if (T.d) render();
-  }
-  function renderSpoilBtn() { const b = $('#spoilBtn'); if (b) b.textContent = T.noSpoilers ? '🙈 No spoilers: on' : '👀 No spoilers: off'; }
-  const hide = () => T.noSpoilers && !T.d?.game?.revealed;
+  const hide = () => opt('noSpoilers') && !T.d?.game?.revealed;
 
   // ---------- data ----------
   async function tick() {
@@ -113,11 +127,12 @@
     T.busy = true;
     try {
       let d = await api('/tv?since=' + T.lastPing);
-      if (d.game && d.game.id !== T.gameId) {
-        // A fresh game: start the trails and the feed over.
-        const hadOld = T.gameId !== null && T.lastPing > 0;
-        T.gameId = d.game.id; T.pings = {}; T.lastPing = 0; T.seen = null; T.queue = []; T.revealShownFor = null;
-        T.L.subs.clearLayers(); T.L.trails.clearLayers(); T.L.players.clearLayers(); T.markers = {}; T.trails = {}; T.sig = {}; T.fitted = false;
+      // A new game, or the admin reset this one: start the trails and pop-ups over.
+      const key = d.game ? d.game.id + ':' + (d.game.started_at || 0) : null;
+      if (d.game && key !== T.gameKey) {
+        const hadOld = T.gameKey !== null && T.lastPing > 0;
+        T.gameKey = key; T.pings = {}; T.lastPing = 0; T.seen = null; T.queue = []; T.revealShownFor = null; T.teamOrder = null;
+        T.L.trails.clearLayers(); T.L.players.clearLayers(); T.markers = {}; T.trails = {}; T.sig = {};
         if (hadOld) d = await api('/tv?since=0');
       }
       T.offset = d.now - Date.now();
@@ -125,8 +140,7 @@
         (T.pings[p.player_id] ||= []).push([p.lat, p.lng]);
         if (p.at > T.lastPing) T.lastPing = p.at;
       }
-      T.d = d;
-      T.down = false;
+      T.d = d; T.down = false;
       render();
     } catch (e) {
       if (!e.auth) { T.down = true; renderClock(); }
@@ -138,23 +152,20 @@
   const playerOf = (id) => T.d.players.find((p) => p.id === id);
   const photoOf = (id) => T.d.photos.find((p) => p.id === id);
   const numOf = (id) => T.d.photos.findIndex((p) => p.id === id) + 1;
-  const timeText = (t) => new Date(t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-  const dot = (c) => `<span class="dot" style="background:${esc(c)}"></span>`;
-  function verdict(status) {
-    if (hide()) return ['', ''];
+  const feet = (m) => (m < 15 ? 'right there' : `${Math.round((m * 3.28) / 10) * 10} ft away`);
+  const placeText = (n) => ['1st', '2nd', '3rd', '4th', '5th', '6th'][n - 1] || n + 'th';
+  // Plain-words result for one answer. Empty while "No spoilers" is on.
+  function verdict(f) {
+    const none = { cls: '', short: '', long: '' };
+    if (hide()) return none;
+    const dist = f.distance_m != null ? feet(f.distance_m) : '';
     return {
-      auto: ['yes', '✓ On the spot'], approved: ['yes', '✓ Judge says yes'], pending: ['wait', '⚖ Judge reviewing'],
-      far: ['no', '✕ Too far'], rejected: ['no', '✕ Judge says no'],
-    }[status] || ['', ''];
-  }
-  // Every submission is one event, and every judge's call is another.
-  function events() {
-    const ev = [];
-    for (const f of T.d.finds) {
-      ev.push({ key: 'sub:' + f.id, kind: 'sub', at: f.created_at, f });
-      if (f.judged_at && !hide()) ev.push({ key: `judge:${f.id}:${f.status}`, kind: 'judge', at: f.judged_at, f });
-    }
-    return ev.sort((a, b) => b.at - a.at);
+      auto: { cls: 'yes', short: `✓ ${dist}`, long: '✓ Right spot!' },
+      approved: { cls: 'yes', short: '✓ Judge: yes', long: '✓ The judge said yes' },
+      pending: { cls: 'wait', short: `? ${dist}`, long: 'Close! The judge will check' },
+      far: { cls: 'no', short: `✕ ${dist}`, long: '✕ Not the right spot' },
+      rejected: { cls: 'no', short: '✕ Judge: no', long: '✕ The judge said no' },
+    }[f.status] || none;
   }
   const changed = (key, val) => { if (T.sig[key] === val) return false; T.sig[key] = val; return true; };
 
@@ -164,103 +175,60 @@
     if (!d.game) { $('#over').innerHTML = '<div class="map-over"><div><h1>No game yet</h1><p>Create one on the admin page.</p></div></div>'; return; }
     $('#title').textContent = '🦃 ' + d.game.name;
     const out = d.players.filter((p) => p.last_seen_at && d.now - p.last_seen_at < STALE_MS).length;
-    $('#sub').textContent = `${d.players.length} players · ${out} out hunting · ${d.photos.length} photos`;
+    $('#status').textContent = d.game.status === 'live' ? `${out} of ${d.players.length} players out hunting` : `${d.players.length} players`;
     renderClock();
     if (changed('area', JSON.stringify(d.game.boundary))) drawArea();
-    renderBoard(); renderFeed(); renderTicker(); renderPlayers(); renderSubs(); renderOverlay();
+    renderTeams(); renderPlayers(); renderOverlay();
     queueNew();
-    if (d.game.revealed && T.revealShownFor !== d.game.id + ':' + d.game.revealed) { T.revealShownFor = d.game.id + ':' + d.game.revealed; showReveal(); }
+    const rkey = d.game.id + ':' + d.game.revealed;
+    if (d.game.revealed && T.revealShownFor !== rkey) { T.revealShownFor = rkey; showReveal(); }
     if (!d.game.revealed) { $('#reveal')?.remove(); T.revealShownFor = null; }
   }
 
-  function clockState() {
-    const g = T.d?.game;
-    if (!g) return ['', '', ''];
-    if (g.status === 'setup') return ['Starts soon', 'STARTING SOON', ''];
-    if (g.status === 'ended') return [g.revealed ? 'Final' : 'Time!', g.revealed ? 'FINAL' : 'GAME OVER', 'final'];
-    if (!g.ends_at) return [`${Math.floor((Date.now() + T.offset - g.started_at) / 60000)} min in`, 'LIVE', 'live'];
-    const left = Math.max(0, g.ends_at - (Date.now() + T.offset));
-    if (!left) return ['Time!', 'GAME OVER', 'final'];
-    const m = Math.floor(left / 60000), h = Math.floor(m / 60), s = Math.floor(left / 1000) % 60;
-    return [(h ? `${h}:${String(m % 60).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`) + ' left', 'LIVE', 'live'];
-  }
   function renderClock() {
-    if (!T.d) return;
-    const [c, p, cls] = clockState();
-    $('#clock').textContent = T.down ? 'Reconnecting…' : c;
-    const pill = $('#pill'); pill.textContent = p; pill.className = 'pill ' + cls;
+    const g = T.d?.game;
+    if (!g) return;
+    let c;
+    if (T.down) c = 'Reconnecting…';
+    else if (g.status === 'setup') c = 'Starting soon';
+    else if (g.status === 'ended') c = g.revealed ? 'Final results' : 'Time\'s up!';
+    else if (!g.ends_at) c = 'Game on!';
+    else {
+      const left = Math.max(0, g.ends_at - (Date.now() + T.offset));
+      const m = Math.floor(left / 60000), h = Math.floor(m / 60), s = Math.floor(left / 1000) % 60;
+      c = left ? (h ? `${h}:${String(m % 60).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`) + ' left' : 'Time\'s up!';
+    }
+    $('#clock').textContent = c;
   }
 
-  function renderBoard() {
+  // One column per team, always in the same order so nothing jumps around.
+  function renderTeams() {
     const d = T.d, h = hide();
-    const teams = h ? [...d.teams].sort((a, b) => b.submitted - a.submitted) : d.teams;
-    $('#boardTitle').textContent = h ? 'Photos sent' : d.game.revealed ? 'Final scores' : 'Scoreboard';
-    $('#boardNote').textContent = h ? 'points at the reveal' : '';
-    const html = teams.map((t, i) => `
-      <div class="board-row" data-team="${esc(t.id)}">
-        <span class="rk">${h ? '' : i + 1}</span>
-        <span class="bar" style="background:${esc(t.color)}"></span>
-        <div>
-          <div class="nm">${esc(t.name)}</div>
-          <div class="who">${t.roster.length ? t.roster.map((p) => `${esc(p.name)} <b>${p.submitted}</b>`).join(' · ') : 'No players yet'}</div>
-          ${h ? '' : `<div class="diffs">${[1, 2, 3].map((x) => `<span><span class="bullet d${x}">${'EMH'[x - 1]}</span>${t.by_diff[x - 1]}</span>`).join('')}<span>${t.found} of ${t.submitted} counted</span></div>`}
+    const ranked = [...d.teams].sort((a, b) => b.score - a.score || a.reached_at - b.reached_at);
+    T.teamOrder ||= [];
+    for (const t of d.teams) if (!T.teamOrder.includes(t.id)) T.teamOrder.push(t.id);
+    const order = [...d.teams].sort((a, b) => T.teamOrder.indexOf(a.id) - T.teamOrder.indexOf(b.id));
+    const anyPoints = d.teams.some((t) => t.score > 0);
+    const html = order.map((t) => {
+      const mine = d.finds.filter((f) => f.team_id === t.id).sort((a, b) => b.created_at - a.created_at);
+      const tiles = mine.slice(0, 40).map((f) => {
+        const p = photoOf(f.photo_id), v = verdict(f);
+        const img = f.proof_key ? `/img/${f.proof_key}` : p?.thumb;
+        return `<div class="tt ${v.cls} ${T.freshIds?.has(f.id) ? 'fresh' : ''}"><img src="${esc(img)}" alt="" loading="lazy"><span class="n">#${numOf(f.photo_id)}</span>
+          <div class="cap">${v.short || (p ? DIFF[p.difficulty] : '')}</div></div>`;
+      }).join('');
+      const place = !h && anyPoints ? ranked.indexOf(t) + 1 : 0;
+      return `<div class="tcol">
+        <div class="thead" style="background:${esc(t.color)}">
+          <div class="row1"><span class="nm">${esc(t.name)}</span>${place ? `<span class="place">${placeText(place)}</span>` : ''}</div>
+          ${h ? `<div class="big">${t.submitted}<small>photos sent</small></div>`
+            : `<div class="big">${t.score}<small>points</small></div><div class="sub">${t.submitted} photo${t.submitted === 1 ? '' : 's'} sent · ${t.found} right</div>`}
+          <div class="who">${t.members.length ? esc(t.members.join(', ')) : 'No players yet'}</div>
         </div>
-        <div class="big">${h ? t.submitted : t.score}<small>${h ? 'sent' : 'points'}</small></div>
-      </div>`).join('');
-    if (changed('board', html)) {
-      const before = Object.fromEntries([...document.querySelectorAll('.board-row')].map((r) => [r.dataset.team, r.querySelector('.big').textContent]));
-      $('#board').innerHTML = html;
-      // Flash a team's row when its number changes.
-      document.querySelectorAll('.board-row').forEach((r) => {
-        if (before[r.dataset.team] !== undefined && before[r.dataset.team] !== r.querySelector('.big').textContent) {
-          r.classList.add('flash'); setTimeout(() => r.classList.remove('flash'), 1500);
-        }
-      });
-    }
-  }
-
-  function feedItem(e, fresh) {
-    const f = e.f, t = teamOf(f.team_id), p = photoOf(f.photo_id), pl = playerOf(f.player_id);
-    const who = esc(pl?.name || f.player_name || 'Judge');
-    if (e.kind === 'judge') {
-      const [cls, txt] = verdict(f.status);
-      return `<div class="fi ${fresh ? 'new' : ''}"><span class="ph">⚖</span><div class="txt">
-        <div class="l1">Judge's call on ${dot(t.color)}<b>${esc(t.name)}</b> #${numOf(f.photo_id)}</div>
-        <div class="l2">${cls ? `<span class="vt ${cls}">${txt}</span>` : '<span>Decided</span>'}<span>${timeText(e.at)}</span></div></div></div>`;
-    }
-    const [cls, txt] = verdict(f.status);
-    const img = f.proof_key ? `/img/${f.proof_key}` : p?.thumb;
-    return `<div class="fi ${fresh ? 'new' : ''}"><img src="${esc(img)}" alt="" loading="lazy"><div class="txt">
-      <div class="l1">${dot(t.color)}<b>${who}</b> sent #${numOf(f.photo_id)} <span style="color:#999">${p ? DIFF[p.difficulty] : ''}</span></div>
-      <div class="l2">${cls ? `<span class="vt ${cls}">${txt}</span>` : ''}<span>${esc(t.name)} · ${timeText(e.at)}</span></div></div></div>`;
-  }
-
-  function renderFeed() {
-    const ev = events();
-    $('#feedCount').textContent = `${T.d.finds.length} submitted`;
-    if (!changed('feed', ev.map((e) => e.key).join() + hide())) return;
-    const prev = T.feedKeys || new Set();
-    T.feedKeys = new Set(ev.map((e) => e.key));
-    $('#feed').innerHTML = ev.length ? ev.slice(0, 30).map((e) => feedItem(e, prev.size && !prev.has(e.key))).join('')
-      : '<div class="tv-empty">Waiting for the first photo…</div>';
-  }
-
-  function renderTicker() {
-    const d = T.d, ev = events().slice(0, 12);
-    const items = [];
-    if (!hide() && d.teams.length && d.teams[0].score > 0) items.push(`${d.game.revealed ? '🏆' : '📈'} ${d.teams.map((t) => `${esc(t.name)} ${t.score}`).join(' · ')}`);
-    for (const e of ev) {
-      const f = e.f, t = teamOf(f.team_id), pl = playerOf(f.player_id), [, txt] = verdict(f.status);
-      items.push(e.kind === 'judge'
-        ? `⚖ Judge's call on ${esc(t.name)}'s #${numOf(f.photo_id)}${txt ? ': ' + txt : ''}`
-        : `${dot(t.color)}${esc(pl?.name || 'Someone')} (${esc(t.name)}) sent #${numOf(f.photo_id)}${txt ? ' · ' + txt : ''}`);
-    }
-    if (!ev.length) items.push(d.game.status === 'setup' ? 'Scan the code to join the hunt!' : 'The hunt is on! Waiting for the first photo…');
-    const html = items.map((x) => `<span>${x}</span>`).join('');
-    if (!changed('ticker', html)) return;
-    const run = $('#ticker');
-    run.innerHTML = html + html; // doubled so the crawl loops seamlessly
-    requestAnimationFrame(() => { run.style.animationDuration = Math.max(20, run.scrollWidth / 2 / 90) + 's'; });
+        <div class="tgrid">${tiles || '<div class="tempty">No photos yet</div>'}${mine.length > 40 ? `<div class="tmore">+ ${mine.length - 40} more</div>` : ''}</div>
+      </div>`;
+    }).join('');
+    if (changed('teams', html)) $('#teams').innerHTML = html;
   }
 
   // ---------- map ----------
@@ -268,58 +236,42 @@
     T.L.area.clearLayers();
     const b = T.d.game.boundary;
     if (!b) return;
-    L.polygon([[[-85, -180], [-85, 180], [85, 180], [85, -180]], b], { stroke: false, fillColor: '#000', fillOpacity: 0.35, interactive: false }).addTo(T.L.area);
-    L.polygon(b, { color: '#e8590c', weight: 5, fill: false, interactive: false }).addTo(T.L.area);
+    L.polygon([[[-85, -180], [-85, 180], [85, 180], [85, -180]], b], { stroke: false, fillColor: '#000', fillOpacity: 0.3, interactive: false }).addTo(T.L.area);
+    L.polygon(b, { color: '#e8590c', weight: 4, fill: false, interactive: false }).addTo(T.L.area);
     fit();
   }
-  function fit(animate) {
+  function fit() {
     const b = T.d?.game?.boundary;
-    if (!T.map || !b || T.showing) return;
+    if (!T.map || !b) return;
     T.map.invalidateSize();
-    T.map.fitBounds(b, { padding: [30, 30], animate: !!animate });
+    T.map.fitBounds(b, { padding: [24, 24], animate: false });
   }
 
-  // Live dots with names, plus each player's trail since the start.
+  // Each player's dot (and trail, if turned on), in their team color.
   function renderPlayers() {
-    const d = T.d;
-    const seen = new Set();
+    const d = T.d, seen = new Set();
     for (const p of d.players) {
       const t = teamOf(p.team_id);
       const trail = T.pings[p.id] || [];
-      if (trail.length > 1) {
-        if (!T.trails[p.id]) T.trails[p.id] = L.polyline([], { weight: 4, opacity: 0.55, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(T.L.trails);
+      if (opt('trails') && trail.length > 1) {
+        if (!T.trails[p.id]) T.trails[p.id] = L.polyline([], { weight: 3, opacity: 0.45, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(T.L.trails);
         T.trails[p.id].setLatLngs(trail).setStyle({ color: t.color });
       }
       if (p.last_lat == null) continue;
       seen.add(p.id);
       const stale = !p.last_seen_at || d.now - p.last_seen_at > STALE_MS;
       const html = `<div class="tv-player ${stale ? 'stale' : ''}" style="background:${esc(t.color)}"></div>`;
-      const icon = L.divIcon({ className: '', html, iconSize: [18, 18] });
       let m = T.markers[p.id];
       if (!m) {
-        m = T.markers[p.id] = L.marker([p.last_lat, p.last_lng], { icon, zIndexOffset: 500 })
-          .bindTooltip(esc(p.name), { permanent: true, direction: 'top', offset: [0, -10], className: 'tv-label' }).addTo(T.L.players);
+        m = T.markers[p.id] = L.marker([p.last_lat, p.last_lng], { icon: L.divIcon({ className: '', html, iconSize: [18, 18] }), zIndexOffset: 500, interactive: false }).addTo(T.L.players);
+        if (opt('names')) m.bindTooltip(esc(p.name), { permanent: true, direction: 'top', offset: [0, -10], className: 'tv-label' });
         m._html = html;
       } else {
         m.setLatLng([p.last_lat, p.last_lng]);
-        if (m._html !== html) { m.setIcon(icon); m._html = html; }
-        m.setTooltipContent(esc(p.name));
+        if (m._html !== html) { m.setIcon(L.divIcon({ className: '', html, iconSize: [18, 18] })); m._html = html; }
       }
     }
     for (const id of Object.keys(T.markers)) if (!seen.has(id)) { T.markers[id].remove(); delete T.markers[id]; }
-  }
-
-  // Small numbered pins where each photo was sent from.
-  function renderSubs() {
-    // In "no spoilers" mode the pins would show where each photo is, so leave them off.
-    const finds = hide() ? [] : T.d.finds.filter((f) => f.lat != null);
-    if (!changed('subs', finds.map((f) => f.id + f.status + f.team_id).join() + hide() + T.d.teams.map((t) => t.color).join())) return;
-    T.L.subs.clearLayers();
-    for (const f of finds) {
-      const t = teamOf(f.team_id), [cls] = verdict(f.status);
-      const bg = cls === 'no' ? '#777' : t.color;
-      L.marker([f.lat, f.lng], { icon: L.divIcon({ className: '', html: `<div class="tv-sub-pin" style="background:${esc(bg)}">${numOf(f.photo_id)}</div>`, iconSize: [22, 22] }), interactive: false }).addTo(T.L.subs);
-    }
   }
 
   function renderOverlay() {
@@ -328,28 +280,29 @@
     if (g.status === 'setup') {
       const url = location.origin + '/';
       const q = qrcode(0, 'M'); q.addData(url); q.make();
-      html = `<div class="map-over"><div class="join-box">
-        <div class="qr">${q.createSvgTag({ cellSize: 8, margin: 2, scalable: true })}</div>
-        <div><h1>Join the hunt!</h1><p>Point your phone camera at the code.</p><p style="color:#999;margin-top:.3em">${esc(url.replace(/^https?:\/\//, ''))}</p>
-          <div class="join-teams">${d.teams.map((t) => `<div>${dot(t.color)}<b>${esc(t.name)}</b><small>${t.members.length ? esc(t.members.join(', ')) : 'no one yet'}</small></div>`).join('')}</div></div>
-      </div></div>`;
+      html = `<div class="map-over"><div><h1>Join the hunt!</h1><p>Point your phone's camera at the code.</p>
+        <div class="qr">${q.createSvgTag({ cellSize: 8, margin: 2, scalable: true })}</div><p>${esc(url.replace(/^https?:\/\//, ''))}</p></div></div>`;
     } else if (g.status === 'ended' && !g.revealed) {
-      html = `<div class="map-over"><div><div style="font-size:4em">🏁</div><h1>Time's up!</h1><p>Hunters, head back to home base.<br>The results are coming up…</p></div></div>`;
+      html = `<div class="map-over"><div><div style="font-size:3.5em">🏁</div><h1>Time's up!</h1><p>Everyone head back.<br>Results coming soon…</p></div></div>`;
     }
     if (changed('over', html)) $('#over').innerHTML = html;
   }
 
-  // ---------- spotlight: new photos and judge's calls ----------
+  // ---------- new-photo pop-up ----------
   function queueNew() {
-    const ev = events();
-    if (!T.seen) { T.seen = new Set(ev.map((e) => e.key)); return; } // don't replay history when the TV opens
-    const fresh = ev.filter((e) => !T.seen.has(e.key)).reverse(); // oldest first
-    fresh.forEach((e) => T.seen.add(e.key));
-    T.queue.push(...fresh);
-    // Stay close to live: keep only the latest few, and skip anything older than 3 minutes.
-    const cutoff = T.d.now - 3 * 60000;
-    T.queue = T.queue.filter((e) => e.at >= cutoff).slice(-5);
-    if (!T.showing) nextSpot();
+    const subs = T.d.finds.filter((f) => f.player_id); // photos players sent (not judge add-ins)
+    if (!T.seen) { T.seen = new Set(subs.map((f) => f.id)); return; } // don't replay history when the TV opens
+    const fresh = subs.filter((f) => !T.seen.has(f.id)).sort((a, b) => a.created_at - b.created_at);
+    fresh.forEach((f) => T.seen.add(f.id));
+    if (!fresh.length) return;
+    // Briefly outline new tiles in their team column.
+    T.freshIds = new Set(fresh.map((f) => f.id)); T.sig.teams = null; renderTeams();
+    setTimeout(() => { T.freshIds = null; }, 3000);
+    if (!opt('popups')) return;
+    // Stay close to live: only the latest few.
+    T.queue.push(...fresh.map((f) => f.id));
+    T.queue = T.queue.slice(-4);
+    if (!T.showing) nextPop();
   }
 
   const preload = (src) => new Promise((res) => {
@@ -357,82 +310,197 @@
     const i = new Image(); const done = () => res(); i.onload = done; i.onerror = done; i.src = src; setTimeout(done, 3000);
   });
 
-  async function nextSpot() {
-    // Wait while the final reveal is on screen.
-    if ($('#reveal')) { T.showing = true; await wait(2000); return nextSpot(); }
-    let e = T.queue.shift();
-    while (e && e.kind === 'judge' && hide()) e = T.queue.shift(); // judge calls would hint at yes/no
-    if (!e) { T.showing = false; fit(true); return; }
+  async function nextPop() {
     T.showing = true;
-    const f = T.d.finds.find((x) => x.id === e.f.id) || e.f; // use the latest status
-    const t = teamOf(f.team_id), p = photoOf(f.photo_id), pl = playerOf(f.player_id);
-    const [cls, txt] = verdict(f.status);
-    if (e.kind === 'judge') {
-      $('#spot').innerHTML = `<div class="judge-spot"><span>⚖ Judge's call</span>${dot(t.color)}<span>${esc(t.name)} #${numOf(f.photo_id)}</span>${cls ? `<span class="vt ${cls}" style="font-size:.8em">${txt}</span>` : ''}</div>`;
-      await wait(JUDGE_MS);
-    } else {
-      const proof = f.proof_key ? `/img/${f.proof_key}` : null;
-      await Promise.all([preload(p?.image), preload(proof)]);
-      if (f.lat != null && !hide()) {
-        T.map.flyTo([f.lat, f.lng], 17, { duration: 1.4 });
-        const burst = L.marker([f.lat, f.lng], { icon: L.divIcon({ className: '', html: `<div class="tv-burst" style="color:${esc(t.color)}"><i></i><i></i></div>`, iconSize: [16, 16] }), interactive: false }).addTo(T.L.fx);
-        setTimeout(() => burst.remove(), SPOT_MS + 1500);
-      }
-      $('#spot').innerHTML = `<div class="spot">
-        <div class="spot-head" style="background:${esc(t.color)}"><span>${esc(pl?.name || 'The judge')}</span><span style="font-weight:400">· ${esc(t.name)} team</span><span class="kind">${pl ? 'NEW PHOTO' : 'ADDED BY THE JUDGE'}</span></div>
-        <div class="spot-pics">
-          <figure><img src="${esc(p?.image)}" alt=""><figcaption>THE PHOTO</figcaption></figure>
-          <figure>${proof ? `<img src="${esc(proof)}" alt="">` : '<div class="nopic">No picture</div>'}<figcaption>THEIR SHOT</figcaption></figure>
-        </div>
-        <div class="spot-foot"><span><b>#${numOf(f.photo_id)}</b>${p?.title ? ' · ' + esc(p.title) : ''} · ${p ? `${DIFF[p.difficulty]} · ${p.points} pt${p.points === 1 ? '' : 's'}` : ''}</span>
-          ${cls ? `<span class="stamp ${cls}">${txt}</span>` : ''}</div>
-      </div>`;
-      await wait(SPOT_MS);
-    }
-    const el = $('#spot').firstElementChild;
-    if (el) { el.classList.add('out'); await wait(400); }
-    $('#spot').innerHTML = '';
-    nextSpot();
+    if ($('#reveal')) { await wait(2000); return nextPop(); } // wait while the results are up
+    const id = T.queue.shift();
+    if (!id) { T.showing = false; return; }
+    const f = T.d.finds.find((x) => x.id === id);
+    if (!f || !opt('popups')) return nextPop();
+    const t = teamOf(f.team_id), p = photoOf(f.photo_id), pl = playerOf(f.player_id), v = verdict(f);
+    const name = pl?.name || f.player_name || 'Someone';
+    const proof = f.proof_key ? `/img/${f.proof_key}` : null;
+    await Promise.all([preload(p?.image), preload(proof)]);
+    const back = document.createElement('div');
+    back.className = 'pop-back';
+    back.innerHTML = `<div class="pop">
+      <div class="pop-head" style="background:${esc(t.color)}">📸 New photo from the ${esc(t.name)} team</div>
+      <div class="pop-sub"><b>${esc(name)}</b> found photo <b>#${numOf(f.photo_id)}</b>${p ? ` · ${DIFF[p.difficulty]} · ${p.points} point${p.points === 1 ? '' : 's'}` : ''}</div>
+      <div class="pop-pics">
+        <figure><img src="${esc(p?.image)}" alt=""><figcaption>The photo they were looking for</figcaption></figure>
+        <figure>${proof ? `<img src="${esc(proof)}" alt="">` : '<div class="nopic">No picture</div>'}<figcaption>${esc(name)}'s picture</figcaption></figure>
+      </div>
+      <div class="pop-verdict ${v.cls}">${v.long || 'Results at the end!'}${v.cls && f.distance_m != null ? `<small>${f.distance_m < 15 ? 'Right at the spot' : feet(f.distance_m) + ' from the spot'}</small>` : ''}</div>
+    </div>`;
+    back.onclick = () => back.remove();
+    document.body.appendChild(back);
+    Sound.chime();
+    await wait(POP_MS);
+    if (back.isConnected) { back.classList.add('out'); await wait(500); back.remove(); }
+    nextPop();
   }
-  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  // ---------- final reveal: last place first, then the winner ----------
+  // ---------- sound (made in the browser, no audio files) ----------
+  const Sound = (() => {
+    let ctx, out, noiseBuf;
+    function ac() {
+      if (!ctx) {
+        const C = window.AudioContext || window.webkitAudioContext;
+        if (!C) return null;
+        ctx = new C();
+        out = ctx.createGain(); out.gain.value = 0.8; out.connect(ctx.destination);
+        noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+        const ch = noiseBuf.getChannelData(0);
+        for (let i = 0; i < ch.length; i++) ch[i] = Math.random() * 2 - 1;
+      }
+      return ctx;
+    }
+    // Browsers only allow sound after someone clicks or presses a key on the page.
+    function unlock() { const c = ac(); if (c && c.state === 'suspended') c.resume().then(soundHint, soundHint); else soundHint(); }
+    const ready = () => opt('sound') && ctx && ctx.state === 'running';
+    function tone(freq, at, dur, type = 'sine', vol = 0.2) {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = type; o.frequency.value = freq;
+      g.gain.setValueAtTime(0.0001, at); g.gain.linearRampToValueAtTime(vol, at + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+      o.connect(g).connect(out); o.start(at); o.stop(at + dur + 0.05);
+    }
+    function noise(at, dur, vol, filter, freq) {
+      const s = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+      s.buffer = noiseBuf; f.type = filter; f.frequency.value = freq;
+      g.gain.setValueAtTime(vol, at); g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+      s.connect(f).connect(g).connect(out); s.start(at); s.stop(at + dur + 0.05);
+      return f;
+    }
+    return {
+      unlock, ready,
+      // A bright "ding" per photo; harder photos ring higher.
+      ding(level) { if (!ready()) return; const t = ctx.currentTime, f = [0, 660, 880, 1175][level] || 880; tone(f, t, 0.4, 'triangle', 0.22); tone(f * 2, t, 0.25, 'sine', 0.06); },
+      // Soft two-note chime for a new photo on the TV.
+      chime() { if (!ready()) return; const t = ctx.currentTime; tone(784, t, 0.5, 'sine', 0.18); tone(1047, t + 0.16, 0.7, 'sine', 0.16); },
+      whoosh() { if (!ready()) return; const t = ctx.currentTime, f = noise(t, 0.7, 0.25, 'bandpass', 400); f.frequency.exponentialRampToValueAtTime(3500, t + 0.6); },
+      // Snare roll that gets louder.
+      drumroll(sec) {
+        if (!ready()) return;
+        const t = ctx.currentTime, n = Math.floor(sec * 26);
+        for (let i = 0; i < n; i++) noise(t + i / 26, 0.06, 0.04 + 0.3 * (i / n) ** 2, 'highpass', 1200);
+      },
+      crash() { if (!ready()) return; noise(ctx.currentTime, 2.4, 0.45, 'highpass', 4500); tone(80, ctx.currentTime, 0.5, 'sine', 0.4); },
+      fanfare() {
+        if (!ready()) return;
+        const t = ctx.currentTime + 0.05;
+        [[523, 0, 0.16], [659, 0.16, 0.16], [784, 0.32, 0.16], [1047, 0.5, 0.3], [784, 0.82, 0.14], [1047, 0.98, 1.4]].forEach(([f, s, d]) => {
+          tone(f, t + s, d + 0.15, 'triangle', 0.22); tone(f / 2, t + s, d + 0.15, 'sawtooth', 0.04);
+        });
+        [523, 659, 784].forEach((f) => tone(f, t + 0.98, 1.6, 'sine', 0.1));
+      },
+    };
+  })();
+  // A small note on screen until sound is allowed.
+  function soundHint() {
+    const need = opt('sound') && !Sound.ready();
+    let el = $('#soundHint');
+    if (need && !el) { el = document.createElement('div'); el.id = 'soundHint'; el.className = 'sound-hint'; el.textContent = '🔈 Click anywhere once to turn on sound'; document.body.appendChild(el); }
+    if (!need && el) el.remove();
+  }
+  ['click', 'keydown', 'touchstart'].forEach((ev) => document.addEventListener(ev, () => Sound.unlock(), { passive: true }));
+
+  // ---------- final reveal: count up every photo, Easy → Medium → Hard, then the winner ----------
   async function showReveal() {
     $('#reveal')?.remove();
-    const teams = T.d.teams;
+    document.querySelectorAll('.pop-back').forEach((x) => x.remove());
+    const d = T.d;
+    const teams = (T.teamOrder || []).map((id) => d.teams.find((t) => t.id === id)).filter(Boolean);
+    d.teams.forEach((t) => { if (!teams.includes(t)) teams.push(t); });
     if (!teams.length) return;
+    const ranked = [...teams].sort((a, b) => b.score - a.score || a.reached_at - b.reached_at);
+    const counted = d.finds.filter((f) => f.status === 'auto' || f.status === 'approved');
+    const run = (T.revealRun = { fast: false });
     const o = document.createElement('div');
     o.className = 'reveal'; o.id = 'reveal';
-    o.innerHTML = `<button class="tv-btn close" id="rvClose">Show the map</button>
-      <div class="crown">🏆</div><h1 id="rvTitle">And the results are…</h1>
-      <div class="rv-list">${teams.map((t, i) => `
-        <div class="rv-row ${i === 0 ? 'first' : ''}" style="border-color:${esc(t.color)}" data-i="${i}">
-          <span class="rk">${i + 1}</span>
-          <div><div class="nm">${esc(t.name)}</div><div class="meta">${[1, 2, 3].map((x) => `<span><span class="bullet d${x}">${'EMH'[x - 1]}</span>${t.by_diff[x - 1]}</span>`).join('')}<span>${t.found} of ${t.submitted} counted</span><span>${esc(t.members.join(', '))}</span></div></div>
-          <span class="pts"><span class="n">0</span><small>pts</small></span>
+    o.innerHTML = `<div class="rv-btns"><button id="rvSkip">Skip to the winner</button><button id="rvClose">Back to the map</button></div>
+      <div class="rv-stage"><div class="rv-title" id="rvTitle"></div><div class="rv-sub" id="rvSub"></div><div class="rv-card" id="rvCard"></div></div>
+      <div class="rv-lanes" id="rvLanes">${teams.map((t) => `
+        <div class="lane" data-team="${esc(t.id)}" style="--c:${esc(t.color)}">
+          <div class="ln-name">${esc(t.name)}<small>${esc(t.members.join(', '))}</small></div>
+          <div class="ln-track"><div class="ln-fill"></div></div>
+          <div class="ln-score">0</div>
         </div>`).join('')}</div>`;
     document.body.appendChild(o);
     $('#rvClose').onclick = () => o.remove();
-    await wait(1800);
-    for (let i = teams.length - 1; i >= 0; i--) {
-      const row = o.querySelector(`[data-i="${i}"]`);
-      if (!row || !o.isConnected) return;
-      row.classList.add('in');
-      countUp(row.querySelector('.n'), teams[i].score, 1400);
-      await wait(i === 0 ? 1600 : 2200);
+    $('#rvSkip').onclick = () => { run.fast = true; $('#rvSkip').remove(); };
+    const live = () => o.isConnected && T.revealRun === run;
+    const pause = (ms) => (run.fast ? Promise.resolve() : wait(ms));
+    const title = (t, sub = '') => { $('#rvTitle').textContent = t; $('#rvSub').textContent = sub; $('#rvTitle').classList.remove('in'); void $('#rvTitle').offsetWidth; $('#rvTitle').classList.add('in'); };
+    const maxScore = Math.max(1, ...teams.map((t) => t.score));
+    const score = Object.fromEntries(teams.map((t) => [t.id, 0]));
+    const lane = (id) => o.querySelector(`.lane[data-team="${CSS.escape(id)}"]`);
+    const setScore = (id, v) => {
+      score[id] = v;
+      const l = lane(id); if (!l) return;
+      l.querySelector('.ln-fill').style.width = (100 * v) / maxScore + '%';
+      l.querySelector('.ln-score').textContent = v;
+    };
+    // Load every picture up front so the count-up doesn't stutter.
+    counted.forEach((f) => { const p = photoOf(f.photo_id); preload(f.proof_key ? `/img/${f.proof_key}` : p?.thumb); });
+
+    title('The results are in!', 'Let\'s count up every photo…');
+    Sound.drumroll(2.2);
+    await pause(2800);
+    for (const level of [1, 2, 3]) {
+      if (!live()) return;
+      if (run.fast) break;
+      // Take turns between teams so the race stays close.
+      const per = teams.map((t) => counted.filter((f) => f.team_id === t.id && photoOf(f.photo_id)?.difficulty === level).sort((a, b) => a.created_at - b.created_at));
+      const items = [];
+      for (let i = 0; per.some((q) => q[i]); i++) per.forEach((q) => q[i] && items.push(q[i]));
+      const pts = d.photos.find((p) => p.difficulty === level)?.points ?? level;
+      title(`${DIFF[level]} photos`, `${pts} point${pts === 1 ? '' : 's'} each · ${items.length ? items.length + ' found' : 'nobody found one!'}`);
+      $('#rvCard').innerHTML = '';
+      Sound.whoosh();
+      await pause(1700);
+      const step = Math.max(180, Math.min(750, 9000 / Math.max(1, items.length)));
+      for (const f of items) {
+        if (!live()) return;
+        if (run.fast) break;
+        const t = teamOf(f.team_id), p = photoOf(f.photo_id), pl = playerOf(f.player_id);
+        $('#rvCard').innerHTML = `<div class="rv-photo" style="--c:${esc(t.color)}">
+          <img src="${esc(f.proof_key ? `/img/${f.proof_key}` : p?.thumb)}" alt="">
+          <div class="rv-plus">+${p?.points ?? 0}</div>
+          <div class="rv-cap"><b>${esc(t.name)}</b> · #${numOf(f.photo_id)}${pl ? ' · ' + esc(pl.name) : ''}</div></div>`;
+        setScore(t.id, score[t.id] + (p?.points || 0));
+        const l = lane(t.id); l.classList.remove('bump'); void l.offsetWidth; l.classList.add('bump');
+        Sound.ding(level);
+        await pause(step);
+      }
+      await pause(900);
     }
-    if (!o.isConnected) return;
-    const h = $('#rvTitle');
-    h.textContent = `${teams[0].name} team wins!` + (teams[1] && teams[1].score === teams[0].score ? ' (tie broken by who got there first)' : ''); h.style.color = teams[0].color; h.classList.add('win');
+    if (!live()) return;
+    // Make sure the bars end on the official scores (also after "Skip").
+    teams.forEach((t) => setScore(t.id, t.score));
+    $('#rvCard').innerHTML = '';
+    title('Final scores');
+    // Slide the lanes into finishing order.
+    const box = $('#rvLanes'), before = new Map([...box.children].map((el) => [el, el.getBoundingClientRect().top]));
+    ranked.forEach((t) => box.appendChild(lane(t.id)));
+    [...box.children].forEach((el) => {
+      const dy = before.get(el) - el.getBoundingClientRect().top;
+      el.style.transition = 'none'; el.style.transform = `translateY(${dy}px)`;
+      requestAnimationFrame(() => requestAnimationFrame(() => { el.style.transition = 'transform .9s cubic-bezier(.3,1.2,.4,1)'; el.style.transform = ''; }));
+    });
+    ranked.forEach((t, i) => lane(t.id).querySelector('.ln-name').insertAdjacentHTML('afterbegin', `<span class="ln-rank">${i + 1}</span>`));
+    await wait(run.fast ? 900 : 1800);
+    if (!live()) return;
+    title('And the winner is…');
+    Sound.drumroll(2.8);
+    await wait(3100);
+    if (!live()) return;
+    const w = ranked[0], tie = ranked[1] && ranked[1].score === w.score;
+    title(`${w.name} team wins!`, `${w.score} points${tie ? ' · tied, but they got there first' : ''} · ${w.members.join(', ')}`);
+    $('#rvTitle').style.color = w.color;
+    lane(w.id).classList.add('winner');
+    $('#rvSkip')?.remove();
+    Sound.crash(); Sound.fanfare();
     confetti();
-  }
-  function countUp(el, to, ms) {
-    const start = performance.now();
-    (function step(now) {
-      const k = Math.min(1, (now - start) / ms);
-      el.textContent = Math.round(to * (1 - Math.pow(1 - k, 3)));
-      if (k < 1) requestAnimationFrame(step);
-    })(start);
   }
   function confetti() {
     const c = document.createElement('canvas');
@@ -450,17 +518,18 @@
     })(start);
   }
 
-  // ---------- TV niceties ----------
-  // Keep the screen awake, hide the mouse when it's still, and keyboard shortcuts.
+  // ---------- TV niceties: keep the screen awake, hide a still mouse, keyboard shortcuts ----------
   async function wake() { try { T.lock = await navigator.wakeLock?.request('screen'); } catch { /* not supported */ } }
   document.addEventListener('visibilitychange', () => { if (!document.hidden) { wake(); tick(); } });
   let idleTimer;
   document.addEventListener('mousemove', () => { document.body.classList.remove('idle'); clearTimeout(idleTimer); idleTimer = setTimeout(() => document.body.classList.add('idle'), 3000); });
   document.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT' || !T.d) return;
-    if (e.key === 'f' || e.key === 'F') fullscreen();
-    if (e.key === 'h' || e.key === 'H') toggleSpoilers();
-    if ((e.key === 'r' || e.key === 'R') && T.d.game?.revealed) showReveal();
+    const k = e.key.toLowerCase();
+    if (k === 'f') fullscreen();
+    if (k === 'h') { setOpt('noSpoilers', !opt('noSpoilers')); applySettings(); $('#settings')?.remove(); }
+    if (k === 'r' && T.d.game?.revealed) showReveal();
+    if (k === 'escape') { $('#settings')?.remove(); document.querySelectorAll('.pop-back').forEach((x) => x.remove()); }
   });
 
   wake();

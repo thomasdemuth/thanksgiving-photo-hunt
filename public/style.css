@@ -241,13 +241,20 @@ body.admin input, body.admin select { min-height: 38px; }
 .judge-pics figure { margin: 0; }
 .judge-pics img, .judge-pics .nopic { width: 100%; aspect-ratio: 4/3; object-fit: cover; border-radius: var(--radius); background: #eee; display: flex; align-items: center; justify-content: center; color: var(--muted); }
 .judge-pics figcaption { font-size: .75em; color: var(--muted); margin-top: .2em; }
-.feed { max-height: 520px; overflow-y: auto; }
+.feed { max-height: 640px; overflow-y: auto; }
 .feed-item { display: flex; gap: .7em; align-items: center; padding: .45em 0; border-bottom: 1px solid var(--line); }
 .feed-item img { width: 46px; height: 46px; object-fit: cover; border-radius: 4px; background: #eee; flex: none; }
 .tag { font-size: .75em; font-weight: 700; padding: 0 .4em; border-radius: 4px; }
 .tag.auto, .tag.approved { background: #e3f4e9; color: var(--ok); }
 .tag.pending { background: var(--warn-bg); color: #8a6d00; }
 .tag.rejected, .tag.far { background: #fde6e5; color: var(--red); }
+.judge-row img { width: 52px; height: 52px; }
+.nopic-sm { width: 52px; height: 52px; border-radius: 4px; background: #eee; color: var(--muted); font-size: .7em; display: flex; align-items: center; justify-content: center; flex: none; }
+.jbtns { display: flex; gap: .3em; flex: none; flex-wrap: wrap; justify-content: flex-end; max-width: 210px; }
+.jbtns button { min-height: 32px !important; padding: 0 .6em; font-size: .8em; border-width: 1px; }
+.jbtns button:disabled { opacity: 1; }
+.jbtns .on-yes { background: var(--ok); border-color: var(--ok); color: var(--white); }
+.jbtns .on-no { background: var(--red); border-color: var(--red); color: var(--white); }
 .flip { min-height: 28px !important; font-size: .75em; font-weight: 400; padding: 0 .5em; white-space: nowrap; flex: none; }
 .tv-link { min-height: 30px !important; color: var(--white); border-color: #777; background: transparent; margin-right: .4em; }
 .qr svg { width: 100%; height: auto; display: block; }
