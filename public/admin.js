@@ -148,8 +148,14 @@
             <span class="grow"></span>
             <span class="small muted" style="font-weight:400">${counts[0]} easy · ${counts[1]} medium · ${counts[2]} hard</span></h2>
           <div class="drop" id="drop">
-            <b>Drag photos here</b> or <label class="btn btn-primary btn-small" style="display:inline-flex;margin:0 .3em">Choose photos<input type="file" id="files" accept="image/*" multiple class="hidden"></label>
-            <p class="small muted" style="margin:.5em 0 0">Use the original photos so their location comes along. Each one gets pinned on the map automatically.</p>
+            <b>Drag photos here</b> or <label class="btn btn-primary btn-small" style="display:inline-flex;margin:0 .3em">Choose photos<input type="file" id="files" accept="image/*,.heic,.heif,.HEIC,.HEIF" multiple class="hidden"></label>
+            <p class="small muted" style="margin:.5em 0 0">iPhone photos (HEIC) and JPEGs both work. Photos with a saved location get pinned on the map automatically.</p>
+            <details class="small muted" style="margin:.4em 0 0;text-align:left"><summary style="cursor:pointer;text-align:center">How to keep the locations</summary>
+              <ul style="margin:.4em 0 0;padding-left:1.2em">
+                <li><b>Mac Photos app:</b> select the photos and drag them onto this box. Or File → Export → Export Unmodified Originals, then drag those files here.</li>
+                <li><b>iPhone:</b> the photo picker can remove locations. In Photos, select the photos → Share → <b>Options</b> → turn on <b>Location</b> → Save to Files. Then tap Choose photos → Browse and pick them from Files.</li>
+                <li><b>Missing a location?</b> The photo still uploads; place its pin on the Map tab.</li>
+              </ul></details>
             <p id="upProg" class="small" style="margin:.4em 0 0"></p>
           </div>
           ${noPin ? `<div class="note"><b>${noPin} photo${noPin > 1 ? 's need' : ' needs'} a pin.</b> No location was saved in ${noPin > 1 ? 'them' : 'it'}. Click "Place pin".</div>` : ''}
@@ -211,38 +217,111 @@
     document.querySelectorAll('[data-place]').forEach((b) => b.onclick = () => { A.sel = b.dataset.place; show('map'); if (A.d.photos.find((p) => p.id === b.dataset.place).lat == null) startPlacing(b.dataset.place); });
   }
 
-  async function upload(files) {
-    files = files.filter((f) => f.type.startsWith('image/') || /\.(heic|heif|jpe?g|png)$/i.test(f.name));
-    const prog = $('#upProg');
-    let done = 0, pinned = 0, failed = 0;
-    for (const file of files) {
-      prog.textContent = `Uploading ${done + 1} of ${files.length}…`;
-      try {
-        let gps = null;
-        try { gps = await exifr.gps(file); } catch { /* no location */ }
-        const image = await shrink(file, 1600, 0.82);
-        const thumb = await shrink(file, 420, 0.6);
-        const fd = new FormData();
-        fd.append('image', image, 'image.jpg'); fd.append('thumb', thumb, 'thumb.jpg');
-        if (gps && Number.isFinite(gps.latitude)) { fd.append('lat', gps.latitude); fd.append('lng', gps.longitude); pinned++; }
-        await api('/photos', 'POST', fd);
-      } catch (e) { console.error(e); failed++; }
-      done++;
-    }
-    await refresh();
-    renderSetup();
-    $('#upProg').innerHTML = `<b>Uploaded ${done - failed} photo${done - failed === 1 ? '' : 's'}.</b> ${pinned} pinned automatically.${failed ? ` <span class="error">${failed} failed (HEIC photos may need Safari, or export as JPEG).</span>` : ''}`;
+  // ---------- photo upload: JPEG, PNG and iPhone HEIC, with the location read from the photo ----------
+  const isHeicName = (f) => /\.(heic|heif)$/i.test(f.name) || /image\/hei[cf]/i.test(f.type);
+  const isImage = (f) => f.type.startsWith('image/') || /\.(heic|heif|jpe?g|png|webp)$/i.test(f.name);
+
+  // Chrome and Firefox can't open HEIC, so load a decoder (about 3 MB) the first time one shows up.
+  let heicLoading;
+  function loadHeic() {
+    if (window.HeicTo) return Promise.resolve();
+    heicLoading ||= new Promise((res, rej) => {
+      const sc = document.createElement('script'); sc.src = '/vendor/heic-to.js';
+      sc.onload = res; sc.onerror = () => { heicLoading = null; rej(new Error('Could not load the HEIC converter. Check your connection.')); };
+      document.head.appendChild(sc);
+    });
+    return heicLoading;
   }
 
-  async function shrink(file, max, quality) {
-    let src;
-    try { src = await createImageBitmap(file, { imageOrientation: 'from-image' }); } catch {
-      src = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = URL.createObjectURL(file); });
+  // Open a photo as something we can draw: the browser's own decoder first (all browsers for JPEG/PNG,
+  // Safari for HEIC too), then the HEIC decoder for Chrome and Firefox.
+  async function decodePhoto(file) {
+    try { return await createImageBitmap(file, { imageOrientation: 'from-image' }); } catch { /* try the other ways */ }
+    if (isHeicName(file) || await sniffHeic(file)) {
+      await loadHeic();
+      return HeicTo({ blob: file, type: 'bitmap' });
     }
+    return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error("this browser can't open it")); i.src = URL.createObjectURL(file); });
+  }
+  // HEIC files say "ftypheic" (or similar) near the start, even if the name or type is wrong.
+  async function sniffHeic(file) {
+    try { const b = new TextDecoder().decode(await file.slice(4, 12).arrayBuffer()); return /^ftyp(heic|heix|hevc|hevx|mif1|msf1)/.test(b); } catch { return false; }
+  }
+
+  function toJpeg(src, max, quality) {
     const w = src.width, h = src.height, k = Math.min(1, max / Math.max(w, h));
     const c = document.createElement('canvas'); c.width = Math.round(w * k); c.height = Math.round(h * k);
-    c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
-    return new Promise((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('encode'))), 'image/jpeg', quality));
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height); // PNGs with see-through parts
+    ctx.drawImage(src, 0, 0, c.width, c.height);
+    return new Promise((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('Could not shrink the photo.'))), 'image/jpeg', quality));
+  }
+
+  // The photo's saved location, if any. Works for JPEG and HEIC.
+  async function readGps(file) {
+    try {
+      const g = await exifr.gps(file);
+      if (g && Number.isFinite(g.latitude) && Number.isFinite(g.longitude) && !(g.latitude === 0 && g.longitude === 0)) return g;
+    } catch { /* no location saved */ }
+    return null;
+  }
+
+  function insideArea(lat, lng, poly) {
+    if (!poly || poly.length < 3) return true;
+    let inside = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const [yi, xi] = poly[i], [yj, xj] = poly[j];
+      if ((yi > lat) !== (yj > lat) && lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) inside = !inside;
+    }
+    return inside;
+  }
+
+  async function upload(all) {
+    if (A.uploading) return;
+    const files = all.filter(isImage);
+    const skipped = all.length - files.length; // videos (Live Photo .mov files), documents
+    if (!files.length) { $('#upProg').innerHTML = `<span class="error">No photos found${skipped ? ` (skipped ${skipped} file${skipped > 1 ? 's' : ''} that aren't photos)` : ''}.</span>`; return; }
+    A.uploading = true;
+    const prog = () => $('#upProg');
+    const r = { ok: 0, pinned: 0, outside: 0, noLoc: [], failed: [] };
+    try {
+      for (const [i, file] of files.entries()) {
+        const label = `${i + 1} of ${files.length}`;
+        prog().textContent = `${isHeicName(file) ? 'Converting iPhone photo' : 'Preparing photo'} ${label}…`;
+        let src;
+        try {
+          const gps = await readGps(file);
+          src = await decodePhoto(file);
+          const image = await toJpeg(src, 1600, 0.82);
+          const thumb = await toJpeg(src, 420, 0.6);
+          prog().textContent = `Uploading photo ${label}…`;
+          const fd = new FormData();
+          fd.append('image', image, 'image.jpg'); fd.append('thumb', thumb, 'thumb.jpg');
+          // Name the photo after the file only if it has a real name (not IMG_1234).
+          const base = file.name.replace(/\.[^.]+$/, '');
+          if (base && !/^(img|dsc|pxl|photo|image)[-_ ]?\d+/i.test(base) && !/^[0-9a-f-]{20,}$/i.test(base)) fd.append('title', base.slice(0, 80));
+          if (gps) {
+            fd.append('lat', gps.latitude); fd.append('lng', gps.longitude); r.pinned++;
+            if (!insideArea(gps.latitude, gps.longitude, A.d.game.boundary)) r.outside++;
+          } else r.noLoc.push(file.name);
+          await api('/photos', 'POST', fd);
+          r.ok++;
+        } catch (e) {
+          console.error(file.name, e);
+          r.failed.push(`${file.name}${e?.message && e.message !== 'auth' ? ` (${e.message})` : ''}`);
+        } finally {
+          if (src && src.close) src.close(); // free memory between big photos
+        }
+      }
+    } finally { A.uploading = false; }
+    await refresh();
+    renderSetup();
+    const list = (a) => esc(a.slice(0, 5).join(', ') + (a.length > 5 ? ` and ${a.length - 5} more` : ''));
+    prog().innerHTML = `<b>Uploaded ${r.ok} photo${r.ok === 1 ? '' : 's'}.</b> ${r.pinned} pinned automatically from the location saved in the photo.`
+      + (r.noLoc.length ? `<br><span class="error">${r.noLoc.length} had no location</span> (${list(r.noLoc)}). Place ${r.noLoc.length > 1 ? 'their pins' : 'its pin'} on the Map tab, or see "How to keep the locations".` : '')
+      + (r.outside ? `<br>${r.outside} ${r.outside > 1 ? 'are' : 'is'} outside the play area. Check ${r.outside > 1 ? 'them' : 'it'} on the Map tab.` : '')
+      + (r.failed.length ? `<br><span class="error">${r.failed.length} failed:</span> ${list(r.failed)}. Try again, or export ${r.failed.length > 1 ? 'them' : 'it'} as JPEG.` : '')
+      + (skipped ? `<br><span class="muted">Skipped ${skipped} file${skipped > 1 ? 's' : ''} that ${skipped > 1 ? "aren't photos" : "isn't a photo"} (like Live Photo videos).</span>` : '');
   }
 
   // ---------- map ----------

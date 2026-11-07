@@ -14,7 +14,7 @@ Phone website for a neighborhood photo scavenger hunt. Players find the spot in 
 5. The admin can change any call at any time (Yes / No / Reset to what GPS said). After the game, "Reset and play again" clears every photo sent and all trails but keeps players, teams and photos.
 
 ## Stack
-Cloudflare Worker (`src/worker.js`) serving static files from `public/` plus a JSON API. D1 for data (`schema.sql`), Workers KV for photos (swap to R2 later: change `putImage`/`serveImage` and the binding).
+Cloudflare Worker (`src/worker.js`) serving static files from `public/` plus a JSON API. Photo uploads accept JPEG, PNG and iPhone HEIC; HEIC is decoded in the browser with `public/vendor/heic-to.js` (libheif, LGPL, loaded only when needed) and the location is read from the photo with exifr. D1 for data (`schema.sql`), Workers KV for photos (swap to R2 later: change `putImage`/`serveImage` and the binding).
 
 ## Commands
 ```
