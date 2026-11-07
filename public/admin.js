@@ -625,7 +625,7 @@
       act($('#reopenBtn'), () => ({ action: 'reopen' }), 'Reopen the game? Results will be hidden again.');
       act($('#revealBtn'), () => ({ action: 'reveal' }), waiting ? `${waiting} answer${waiting > 1 ? 's are' : ' is'} still waiting for the judge and won't count. Reveal anyway?` : 'Reveal the results to everyone now?');
       act($('#hideBtn'), () => ({ action: 'hide' }));
-      act($('#resetBtn'), () => ({ action: 'reset' }), 'Reset the game?\n\nThis deletes every photo sent, all scores and all trails. Players, teams and the hunt photos stay, so everyone can play again without rejoining. This can\'t be undone.\n\n(Tip: download the results CSV first if you want to keep them.)');
+      act($('#resetBtn'), () => ({ action: 'reset' }), 'Reset the game?\n\nThis deletes every photo sent, all scores and all trails, and removes every player: everyone goes back to the join screen and scans in again. Teams and the hunt photos stay. This can\'t be undone.\n\n(Tip: download the results CSV first if you want to keep them.)');
     }
     const jl = $('#joinedLine'); if (jl) jl.textContent = `${photos.length} photos · ${players.length} players joined.`;
 
@@ -662,8 +662,16 @@
         const ps = players.filter((p) => p.team_id === t.id);
         return `<div style="margin-bottom:.8em"><div class="row small" style="font-weight:700;margin-bottom:.3em"><span class="swatch" style="background:${esc(t.color)}"></span>${esc(t.name)} <span class="muted" style="font-weight:400">${ps.length}</span></div>` + ps.map((p) => `
           <div class="row" style="padding:.2em 0 .2em 1.4em"><span class="grow small">${esc(p.name)} <span class="muted">· ${ago(p.last_seen_at)}</span></span>
-          <select data-move="${p.id}" style="width:auto;min-height:32px;font-size:.8em;padding:.1em .4em">${teams.map((tt) => `<option value="${tt.id}" ${tt.id === t.id ? 'selected' : ''}>${esc(tt.name)}</option>`).join('')}</select></div>`).join('') + '</div>';
+          <select data-move="${p.id}" style="width:auto;min-height:32px;font-size:.8em;padding:.1em .4em">${teams.map((tt) => `<option value="${tt.id}" ${tt.id === t.id ? 'selected' : ''}>${esc(tt.name)}</option>`).join('')}</select>
+          <button class="btn-small kick-btn" data-kick="${p.id}" title="Remove ${esc(p.name)} from the game">Remove</button></div>`).join('') + '</div>';
       }).join('') : '<p class="muted small" style="margin:0">Nobody yet. Show the QR code.</p>';
+      document.querySelectorAll('[data-kick]').forEach((b) => b.onclick = async () => {
+        const pl = playerOf(b.dataset.kick), tm = teamOf(pl?.team_id);
+        const sent = finds.filter((f) => f.player_id === b.dataset.kick).length;
+        if (!confirm(`Remove ${pl?.name || 'this player'} from the game?\n\nTheir phone goes back to the join screen.${sent ? ` The ${sent} photo${sent > 1 ? 's' : ''} they sent stay${sent > 1 ? '' : 's'} with ${tm.name}.` : ''}`)) return;
+        b.disabled = true;
+        try { await api('/players/' + b.dataset.kick, 'DELETE'); } finally { await refresh(); A.sig.players = null; render(); }
+      });
       document.querySelectorAll('[data-move]').forEach((s) => s.onchange = async () => { await api('/players/' + s.dataset.move, 'PATCH', { team_id: s.value }); await refresh(); render(); });
     }
     // The hand-add panel is only rebuilt when teams or photos change, so it keeps what you picked.

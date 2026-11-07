@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS teams (
 CREATE TABLE IF NOT EXISTS players (
   id TEXT PRIMARY KEY, game_id TEXT NOT NULL, team_id TEXT NOT NULL, name TEXT NOT NULL,
   name_key TEXT NOT NULL, token TEXT NOT NULL UNIQUE, last_lat REAL, last_lng REAL,
-  last_accuracy REAL, last_seen_at INTEGER, created_at INTEGER NOT NULL
+  last_accuracy REAL, last_seen_at INTEGER, kicked_at INTEGER, created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS photos (
   id TEXT PRIMARY KEY, game_id TEXT NOT NULL, title TEXT, difficulty INTEGER NOT NULL DEFAULT 1,

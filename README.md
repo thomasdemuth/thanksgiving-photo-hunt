@@ -11,7 +11,7 @@ Phone website for a neighborhood photo scavenger hunt. Players find the spot in 
 2. Players send a picture + location for each spot. They see only "Sent", how many photos each team and person has sent, teammates on the map, and "Red team found something!" pop-ups.
 3. Server marks each answer: within the photo's radius = yes; close call = judge queue; far = no (the judge can still approve it). "Submit again" replaces a team's answer; only the newest counts.
 4. When the game ends, phones lock to "Game over! See the results on the main screen." Admin clears the judge queue, then presses Reveal results for the TV.
-5. The admin can change any call at any time (Yes / No / Reset to what GPS said). After the game, "Reset and play again" clears every photo sent and all trails but keeps players, teams and photos.
+5. The admin can change any call at any time (Yes / No / Reset to what GPS said). The admin can remove a player (their phone goes back to the join screen; photos they sent stay with the team). After the game, "Reset and play again" clears every photo sent and all trails and removes every player (everyone joins again); teams and photos stay.
 
 ## Stack
 Cloudflare Worker (`src/worker.js`) serving static files from `public/` plus a JSON API. Photo uploads accept JPEG, PNG and iPhone HEIC; HEIC is decoded in the browser with `public/vendor/heic-to.js` (libheif, LGPL, loaded only when needed) and the location is read from the photo with exifr. D1 for data (`schema.sql`), Workers KV for photos (swap to R2 later: change `putImage`/`serveImage` and the binding).

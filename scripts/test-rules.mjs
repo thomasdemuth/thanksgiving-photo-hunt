@@ -193,16 +193,34 @@ await admin('/finds/' + rf.id, 'PATCH', { status: 'approved' });
 await admin('/finds/' + rf.id, 'PATCH', { status: 'reset' });
 st = await admin('/state');
 t('reset puts a judged photo back to what GPS said', active(st, team2.id, rp.id)[0].status === 'far' && !active(st, team2.id, rp.id)[0].judged_at, active(st, team2.id, rp.id));
-const playersBefore = st.players.length;
+// Kick one player: their phone is told, they vanish from the lists, their photos stay with the team
+const kid = await post('/api/join', { name: 'Kicky', team_id: team2.id });
+st = await admin('/state');
+await send(kid.token, st.photos.find((p) => p.lat != null && !st.finds.some((f) => f.team_id === team2.id && f.photo_id === p.id)));
+st = await admin('/state');
+const kickRow = st.players.find((p) => p.name === 'Kicky');
+const kickedFind = st.finds.find((f) => f.player_id === kickRow.id);
+await admin('/players/' + kickRow.id, 'DELETE');
+const kickedPoll = await post('/api/poll', {}, kid.token);
+t('a removed player is sent back to the join screen', kickedPoll.status === 401 && kickedPoll.kicked === true, kickedPoll);
+st = await admin('/state');
+t('a removed player disappears from the player list', !st.players.some((p) => p.name === 'Kicky'));
+t('photos from a removed player stay with the team', st.finds.some((f) => f.id === kickedFind.id));
+const others = await post('/api/poll', {}, c.token);
+t('a removed player disappears from team rosters', !others.teams.some((x) => x.members.includes('Kicky')));
+t('a removed player can\'t send photos', (await send(kid.token, rp)).status === 401);
+t('a removed player can\'t rejoin as themselves', (await post('/api/join', { player_id: kickRow.id })).status === 404 && !(await post('/api/lookup', { name: 'Kicky' })).matches.length);
+
 await admin('/game', 'PATCH', { action: 'end' });
 await admin('/game', 'PATCH', { action: 'reveal' });
 await admin('/game', 'PATCH', { action: 'reset' });
 st = await admin('/state');
 const tvr = await admin('/tv?since=0');
 t('game reset clears photos sent, scores and trails', st.finds.length === 0 && st.scores.every((x) => x.score === 0) && tvr.pings.length === 0, [st.finds.length, tvr.pings.length]);
-t('game reset keeps players and goes back to not started', st.players.length === playersBefore && st.game.status === 'setup' && !st.game.revealed_at && st.players.every((p) => p.last_lat == null));
-t('players stay signed in after a reset', (await post('/api/poll', {}, c.token)).status === 200);
-// Lobby and countdown
+t('game reset removes every player and goes back to not started', st.players.length === 0 && st.game.status === 'setup' && !st.game.revealed_at);
+t('players are sent back to the join screen after a reset', (await post('/api/poll', {}, c.token)).status === 401);
+// Lobby and countdown (everyone joins again after the reset)
+c.token = (await post('/api/join', { name: 'Other', team_id: team2.id })).token;
 const sw = await post('/api/team', { team_id: team.id }, c.token);
 st = await admin('/state');
 t('players can switch teams in the lobby', sw.ok && st.players.find((p) => p.name === 'Other').team_id === team.id, sw);

@@ -58,15 +58,16 @@
         signal: ctrl.signal,
       });
       const data = await res.json().catch(() => ({}));
-      if (res.status === 401 && data.error === 'not_joined') { resetPlayer(); throw Object.assign(new Error('not_joined'), { handled: true }); }
+      if (res.status === 401 && data.error === 'not_joined') { resetPlayer(data.kicked ? 'kicked' : 'reset'); throw Object.assign(new Error('not_joined'), { handled: true }); }
       // 4xx = the server said no (don't retry). 5xx = treat like no signal and retry later.
       if (!res.ok) throw Object.assign(new Error(data.error || 'Something went wrong.'), { server: res.status < 500, status: res.status });
       return data;
     } finally { clearTimeout(timer); }
   }
 
-  function resetPlayer() {
-    // Token no longer valid (e.g. a new game was created): start fresh.
+  function resetPlayer(why) {
+    // Token no longer valid (removed by the host, game reset, or a new game): start fresh.
+    try { sessionStorage.setItem('bye', why || 'reset'); } catch { /* private mode */ }
     store.del('token');
     store.del('queue'); // queued check-ins belong to the old game
     location.reload();
@@ -155,8 +156,13 @@
       app.innerHTML = `<div class="screen stack">${hero('Photo Hunt', 'No game is set up yet. Check back soon!')}<button class="btn-big" onclick="location.reload()">Refresh</button></div>`;
       return;
     }
+    // Explain why this phone is back on the join screen.
+    let bye = null; try { bye = sessionStorage.getItem('bye'); sessionStorage.removeItem('bye'); } catch { /* ignore */ }
+    const byeNote = bye === 'kicked' ? '<p class="note">The host removed you from the game. You can join again below.</p>'
+      : bye ? '<p class="note">The host reset the game. Join again to play.</p>' : '';
     app.innerHTML = `
       <div class="screen stack">
+        ${byeNote}
         ${hero(info.game.name, 'Find the spots in the photos and snap a picture there. Harder photos are worth more. Results are revealed at the end!')}
         <form id="nameForm" class="card stack">
           <label for="name">Your first name</label>

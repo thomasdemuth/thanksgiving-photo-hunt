@@ -134,7 +134,7 @@ async function gameState(env, game) {
                            f.created_at, f.judged_at, f.rowid AS seq, p.name AS player_name
                     FROM finds f LEFT JOIN players p ON p.id = f.player_id
                     WHERE f.game_id = ? AND f.status != 'replaced' ORDER BY f.created_at, f.rowid`).bind(game.id),
-    env.DB.prepare('SELECT id, team_id, name FROM players WHERE game_id = ? ORDER BY created_at').bind(game.id),
+    env.DB.prepare('SELECT id, team_id, name FROM players WHERE game_id = ? AND kicked_at IS NULL ORDER BY created_at').bind(game.id),
   ]);
   const pts = Object.fromEntries(photos.results.map((p) => [p.id, p.points]));
   const diff = Object.fromEntries(photos.results.map((p) => [p.id, p.difficulty]));
@@ -210,7 +210,7 @@ function playerView(s, me, mates) {
 async function playerFromToken(env, request) {
   const token = request.headers.get('x-player');
   if (!token) return null;
-  return env.DB.prepare('SELECT * FROM players WHERE token = ?').bind(token).first();
+  return env.DB.prepare('SELECT * FROM players WHERE token = ? AND kicked_at IS NULL').bind(token).first();
 }
 
 // ---------- player API ----------
@@ -232,7 +232,7 @@ async function player(request, env, url) {
     const game = await currentGame(env);
     if (!game) return json({ error: 'No game yet.' }, 404);
     const rows = await env.DB.prepare(
-      'SELECT p.id, p.name, t.name AS team, t.color FROM players p JOIN teams t ON t.id = p.team_id WHERE p.game_id = ? AND p.name_key = ?'
+      'SELECT p.id, p.name, t.name AS team, t.color FROM players p JOIN teams t ON t.id = p.team_id WHERE p.game_id = ? AND p.name_key = ? AND p.kicked_at IS NULL'
     ).bind(game.id, nameKey(name)).all();
     return json({ matches: rows.results });
   }
@@ -258,7 +258,7 @@ async function player(request, env, url) {
     if (!game) return json({ error: 'No game yet.' }, 404);
     if (player_id) {
       // Rejoin as an existing player (new phone, cleared browser).
-      const p = await env.DB.prepare('SELECT * FROM players WHERE id = ? AND game_id = ?').bind(player_id, game.id).first();
+      const p = await env.DB.prepare('SELECT * FROM players WHERE id = ? AND game_id = ? AND kicked_at IS NULL').bind(player_id, game.id).first();
       if (!p) return json({ error: 'Could not find that player.' }, 404);
       return json({ token: p.token, player: { id: p.id, name: p.name, team_id: p.team_id } });
     }
@@ -284,7 +284,8 @@ async function player(request, env, url) {
       env.DB.prepare('SELECT * FROM games ORDER BY created_at DESC LIMIT 1'),
     ]);
     const me = meR.results[0], game = gameR.results[0];
-    // Players from an older game get sent back to the join screen.
+    // Players from an older game, or removed by the host, go back to the join screen.
+    if (me?.kicked_at && game?.id === me.game_id) return json({ error: 'not_joined', kicked: true }, 401);
     if (!me || !game || game.id !== me.game_id) return json({ error: 'not_joined' }, 401);
     const body = await request.json().catch(() => ({}));
     const stmts = [];
@@ -298,7 +299,7 @@ async function player(request, env, url) {
       } else stmts.push(env.DB.prepare('UPDATE players SET last_seen_at = ? WHERE id = ?').bind(now(), me.id));
     }
     // Teammates' latest spots, read fresh every time (they move without changing the game version).
-    stmts.push(env.DB.prepare('SELECT id, name, last_lat AS lat, last_lng AS lng, last_seen_at AS seen_at FROM players WHERE game_id = ? AND team_id = ? AND id != ? AND last_lat IS NOT NULL')
+    stmts.push(env.DB.prepare('SELECT id, name, last_lat AS lat, last_lng AS lng, last_seen_at AS seen_at FROM players WHERE game_id = ? AND team_id = ? AND id != ? AND last_lat IS NOT NULL AND kicked_at IS NULL')
       .bind(game.id, me.team_id, me.id));
     const res = await env.DB.batch(stmts);
     const mates = res[res.length - 1].results;
@@ -407,7 +408,7 @@ async function admin(request, env, url) {
     const [teams, photos, players, finds] = await env.DB.batch([
       env.DB.prepare('SELECT * FROM teams WHERE game_id = ? ORDER BY rowid').bind(game.id),
       env.DB.prepare('SELECT * FROM photos WHERE game_id = ? ORDER BY sort, rowid').bind(game.id),
-      env.DB.prepare('SELECT id, team_id, name, last_lat, last_lng, last_accuracy, last_seen_at FROM players WHERE game_id = ? ORDER BY created_at').bind(game.id),
+      env.DB.prepare('SELECT id, team_id, name, last_lat, last_lng, last_accuracy, last_seen_at FROM players WHERE game_id = ? AND kicked_at IS NULL ORDER BY created_at').bind(game.id),
       env.DB.prepare("SELECT * FROM finds WHERE game_id = ? AND status != 'replaced' ORDER BY created_at DESC").bind(game.id),
     ]);
     const s = await gameState(env, game);
@@ -439,11 +440,12 @@ async function admin(request, env, url) {
     }
     if (b.action === 'hide') { sets.push('revealed_at = NULL'); }
     if (b.action === 'reset') {
-      // Play again with the same players, teams and photos: clear every photo sent and all trails.
+      // Play again with the same teams and photos: clear every photo sent and all trails, and remove
+      // every player (their phones go back to the join screen).
       await env.DB.batch([
         env.DB.prepare('DELETE FROM finds WHERE game_id = ?').bind(game.id),
         env.DB.prepare('DELETE FROM pings WHERE game_id = ?').bind(game.id),
-        env.DB.prepare('UPDATE players SET last_lat = NULL, last_lng = NULL, last_accuracy = NULL, last_seen_at = NULL WHERE game_id = ?').bind(game.id),
+        env.DB.prepare('DELETE FROM players WHERE game_id = ?').bind(game.id),
       ]);
       sets.push("status = 'setup'", 'started_at = NULL', 'ends_at = NULL', 'revealed_at = NULL');
     }
@@ -461,7 +463,7 @@ async function admin(request, env, url) {
       const { name, color } = await request.json();
       await env.DB.prepare('UPDATE teams SET name = COALESCE(?, name), color = COALESCE(?, color) WHERE id = ? AND game_id = ?').bind(name ?? null, color ?? null, parts[1], game.id).run();
     } else if (method === 'DELETE') {
-      const used = await env.DB.prepare('SELECT COUNT(*) AS n FROM players WHERE team_id = ?').bind(parts[1]).first();
+      const used = await env.DB.prepare('SELECT COUNT(*) AS n FROM players WHERE team_id = ? AND kicked_at IS NULL').bind(parts[1]).first();
       if (used.n) return json({ error: 'Move the players off this team first.' }, 400);
       await env.DB.prepare('DELETE FROM teams WHERE id = ? AND game_id = ?').bind(parts[1], game.id).run();
     }
@@ -574,13 +576,23 @@ async function admin(request, env, url) {
     const [pings, players] = await env.DB.batch([
       env.DB.prepare('SELECT player_id, lat, lng, at FROM pings WHERE game_id = ? AND at > ? ORDER BY at LIMIT 8000')
         .bind(game.id, Math.max(since, now() - 6 * 3600000)),
-      env.DB.prepare('SELECT id, team_id, name, last_lat, last_lng, last_seen_at FROM players WHERE game_id = ? ORDER BY created_at').bind(game.id),
+      env.DB.prepare('SELECT id, team_id, name, last_lat, last_lng, last_seen_at FROM players WHERE game_id = ? AND kicked_at IS NULL ORDER BY created_at').bind(game.id),
     ]);
     const v = tag(game);
     // Nothing new since the TV's last look: just the moving dots.
     if (url.searchParams.get('v') === v) return json({ same: true, v, players: players.results, pings: pings.results, now: now() });
     const s = await gameState(env, game);
     return json({ ...s, players: players.results, v, pings: pings.results, now: now() });
+  }
+
+  // Remove a player. Their phone goes back to the join screen; photos they sent stay with their team.
+  if (parts[0] === 'players' && method === 'DELETE') {
+    await env.DB.batch([
+      env.DB.prepare('UPDATE players SET kicked_at = ? WHERE id = ? AND game_id = ?').bind(now(), parts[1], game.id),
+      env.DB.prepare('DELETE FROM pings WHERE player_id = ?').bind(parts[1]),
+    ]);
+    await bump(env, game.id);
+    return json({ ok: true });
   }
 
   if (parts[0] === 'players' && method === 'PATCH') {

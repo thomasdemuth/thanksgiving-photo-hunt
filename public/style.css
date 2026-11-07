@@ -180,7 +180,7 @@ canvas#confetti { position: fixed; inset: 0; pointer-events: none; z-index: 70; 
 .leaflet-tooltip.mate-label::before { display: none; }
 
 /* ---------- Admin ---------- */
-.a-head { position: sticky; top: 0; z-index: 1000; display: flex; align-items: center; gap: 1em; padding: .5em 1em; background: var(--ink); color: var(--white); flex-wrap: wrap; }
+.a-head { position: sticky; top: 0; z-index: 1100; display: flex; align-items: center; gap: 1em; padding: .5em 1em; background: var(--ink); color: var(--white); flex-wrap: wrap; }
 .a-head .brand { font-weight: 700; font-size: 1.1em; }
 .a-head nav { display: flex; gap: 2px; flex-wrap: wrap; }
 .a-head nav button { min-height: 36px; border: 0; background: transparent; color: #bbb; font-size: .9em; padding: 0 .8em; border-bottom: 3px solid transparent; border-radius: 0; }
@@ -272,6 +272,7 @@ body.admin input, body.admin select { min-height: 38px; }
 .jbtns button:disabled { opacity: 1; }
 .jbtns .on-yes { background: var(--ok); border-color: var(--ok); color: var(--white); }
 .jbtns .on-no { background: var(--red); border-color: var(--red); color: var(--white); }
+.kick-btn { min-height: 32px !important; font-size: .78em; font-weight: 400; padding: 0 .6em; border-width: 1px; color: var(--red); border-color: #e3a19e; }
 .flip { min-height: 28px !important; font-size: .75em; font-weight: 400; padding: 0 .5em; white-space: nowrap; flex: none; }
 .tv-link { min-height: 30px !important; color: var(--white); border-color: #777; background: transparent; margin-right: .4em; }
 .qr svg { width: 100%; height: auto; display: block; }
