@@ -47,6 +47,24 @@ t('other teams\' locations are not shared', !(await post('/api/poll', {}, c.toke
 t('no player locations leak in the poll', pv.players === undefined);
 t('roster carries no player ids', pv.teams.every((x) => x.roster.every((r) => r.id === undefined)));
 
+// Speed: quick "nothing new" replies, and changes show up on the very next poll
+const full = await post('/api/poll', {}, a.token);
+const quiet = await post('/api/poll', { v: full.v }, a.token);
+t('poll with the latest version gets a tiny "nothing new" reply', quiet.same === true && quiet.teams === undefined && Array.isArray(quiet.mates), Object.keys(quiet));
+const pNew = st.photos.filter((p) => p.lat != null && !st.finds.some((f) => f.team_id === team.id && f.photo_id === p.id)).at(-1);
+await send(b.token, pNew);
+const after = await post('/api/poll', { v: full.v }, a.token);
+t('a teammate\'s photo shows up on the next poll (no cache delay)', !after.same && after.finds.some((f) => f.photo_id === pNew.id), after.same);
+await admin('/finds', 'POST', { team_id: team2.id, photo_id: pNew.id });
+const qv1 = await admin('/tv?since=' + Date.now());
+const qv2 = await admin('/tv?since=' + Date.now() + '&v=' + encodeURIComponent(qv1.v));
+t('TV gets "nothing new" too, but still gets players', qv2.same === true && qv2.players.length > 0 && qv2.finds === undefined);
+await admin('/finds/' + (await admin('/state')).finds.find((f) => f.team_id === team2.id && f.photo_id === pNew.id).id, 'PATCH', { status: 'rejected' });
+const qv3 = await admin('/tv?since=' + Date.now() + '&v=' + encodeURIComponent(qv1.v));
+t('a judge call shows on the TV right away', !qv3.same && qv3.finds.some((f) => f.photo_id === pNew.id && f.status === 'rejected'));
+await admin('/finds/' + qv3.finds.find((f) => f.team_id === team2.id && f.photo_id === pNew.id).id, 'DELETE');
+st = await admin('/state');
+
 // Judge
 const close = await send(a.token, p3, 0.0006);
 st = await admin('/state');

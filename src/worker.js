@@ -8,12 +8,18 @@ const POINTS = { 1: 1, 2: 2, 3: 3 };
 // Default play area: Canal St (6th Ave to Greenwich), Greenwich St (Canal to Christopher),
 // Christopher St (Greenwich to 6th Ave), 6th Ave (Christopher to Canal). Traced from OpenStreetMap.
 const DEFAULT_BOUNDARY = [[40.721882,-74.005355],[40.723845,-74.008033],[40.724026,-74.008445],[40.724495,-74.008916],[40.724597,-74.00921],[40.724722,-74.009309],[40.726,-74.0091],[40.7296,-74.0084],[40.732877,-74.007514],[40.734146,-73.999182],[40.729621,-74.002232],[40.72212,-74.005379]];
-const STATE_TTL_MS = 5000;
-const PING_EVERY_MS = 25000;
+const STATE_TTL_MS = 60000; // safety net only: the cache is keyed on the game's version
+const PING_EVERY_MS = 12000; // how often a phone's location is saved (teammates and the TV see it)
 
 // Per-isolate cache of the shared game state, so a burst of polls costs one set of reads.
 const stateCache = new Map();
-const bust = (gameId) => stateCache.delete(gameId);
+// Every write bumps the game's version. Phones and the TV send the last version they saw and get a
+// tiny "nothing new" reply until it changes, so they can check every few seconds cheaply.
+async function bump(env, gameId) {
+  stateCache.delete(gameId);
+  await env.DB.prepare('UPDATE games SET version = version + 1 WHERE id = ?').bind(gameId).run();
+}
+const tag = (game) => `${game.id}:${game.version || 0}:${effectiveStatus(game)}`;
 
 export default {
   async fetch(request, env) {
@@ -115,7 +121,7 @@ async function recheck(env, gameId, photoIds) {
 // Shared state for one game. Holds everything (locations, statuses); callers decide what each viewer may see.
 async function gameState(env, game) {
   // The cache entry is tied to the game row, so a reveal/hide/end seen by any request skips stale data.
-  const ver = [game.status, game.ends_at, game.revealed_at, game.started_at].join('|');
+  const ver = [game.version || 0, effectiveStatus(game), game.ends_at, game.revealed_at, game.started_at].join('|');
   const hit = stateCache.get(game.id);
   if (hit && hit.ver === ver && now() - hit.at < STATE_TTL_MS) return hit.data;
   const [teams, photos, finds, players] = await env.DB.batch([
@@ -125,7 +131,7 @@ async function gameState(env, game) {
                            f.created_at, f.judged_at, f.rowid AS seq, p.name AS player_name
                     FROM finds f LEFT JOIN players p ON p.id = f.player_id
                     WHERE f.game_id = ? AND f.status != 'replaced' ORDER BY f.created_at, f.rowid`).bind(game.id),
-    env.DB.prepare('SELECT id, team_id, name, last_lat, last_lng, last_seen_at FROM players WHERE game_id = ? ORDER BY created_at').bind(game.id),
+    env.DB.prepare('SELECT id, team_id, name FROM players WHERE game_id = ? ORDER BY created_at').bind(game.id),
   ]);
   const pts = Object.fromEntries(photos.results.map((p) => [p.id, p.points]));
   const diff = Object.fromEntries(photos.results.map((p) => [p.id, p.difficulty]));
@@ -171,7 +177,7 @@ async function gameState(env, game) {
 
 // What one player is allowed to see. Before the reveal: no scores, no right/wrong, and other
 // teams' finds only as anonymous "Team Red found something" events.
-function playerView(s, me) {
+function playerView(s, me, mates) {
   const revealed = s.game.revealed;
   const teams = s.teams.map((t) => {
     const base = { id: t.id, name: t.name, color: t.color, members: t.members, players: t.players, roster: t.roster, submitted: revealed ? t.submitted : t.sent };
@@ -191,9 +197,6 @@ function playerView(s, me) {
         ...(revealed ? { counted: COUNTS.has(f.status) } : {}),
       };
     });
-  const mates = s.players
-    .filter((p) => p.team_id === me.team_id && p.id !== me.id && p.last_lat != null)
-    .map((p) => ({ id: p.id, name: p.name, lat: p.last_lat, lng: p.last_lng, seen_at: p.last_seen_at }));
   // Newest arrivals (by insert order, so late offline photos still pop up).
   const events = [...visible].sort((a, b) => a.seq - b.seq).slice(-40).map((f) => ({ id: f.id, team_id: f.team_id, at: f.created_at }));
   return { game: s.game, teams, photos: s.photos, finds, mates, events };
@@ -247,29 +250,42 @@ async function player(request, env, url) {
     await env.DB.prepare(
       'INSERT INTO players (id, game_id, team_id, name, name_key, token, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
     ).bind(p.id, game.id, team_id, clean, nameKey(clean), p.token, now()).run();
-    bust(game.id);
+    await bump(env, game.id);
     return json({ token: p.token, player: { id: p.id, name: p.name, team_id } });
   }
 
-  // The one combined poll: send my location, get the game back.
+  // The one combined poll: send my location, get the game back (or "nothing new").
   if (path === '/api/poll' && method === 'POST') {
-    const me = await playerFromToken(env, request);
-    if (!me) return json({ error: 'not_joined' }, 401);
+    const token = request.headers.get('x-player');
+    if (!token) return json({ error: 'not_joined' }, 401);
+    // Me and the current game in one round trip.
+    const [meR, gameR] = await env.DB.batch([
+      env.DB.prepare('SELECT * FROM players WHERE token = ?').bind(token),
+      env.DB.prepare('SELECT * FROM games ORDER BY created_at DESC LIMIT 1'),
+    ]);
+    const me = meR.results[0], game = gameR.results[0];
     // Players from an older game get sent back to the join screen.
-    const game = await currentGame(env);
-    if (!game || game.id !== me.game_id) return json({ error: 'not_joined' }, 401);
+    if (!me || !game || game.id !== me.game_id) return json({ error: 'not_joined' }, 401);
     const body = await request.json().catch(() => ({}));
+    const stmts = [];
     if (!me.last_seen_at || now() - me.last_seen_at > PING_EVERY_MS) {
       const hasLoc = Number.isFinite(body.lat) && Number.isFinite(body.lng);
-      await env.DB.batch(hasLoc ? [
-        env.DB.prepare('UPDATE players SET last_lat = ?, last_lng = ?, last_accuracy = ?, last_seen_at = ? WHERE id = ?')
-          .bind(body.lat, body.lng, Number.isFinite(body.acc) ? body.acc : null, now(), me.id),
-        env.DB.prepare('INSERT INTO pings (player_id, game_id, lat, lng, at) VALUES (?, ?, ?, ?, ?)')
-          .bind(me.id, game.id, body.lat, body.lng, now()),
-      ] : [env.DB.prepare('UPDATE players SET last_seen_at = ? WHERE id = ?').bind(now(), me.id)]);
+      if (hasLoc) {
+        stmts.push(env.DB.prepare('UPDATE players SET last_lat = ?, last_lng = ?, last_accuracy = ?, last_seen_at = ? WHERE id = ?')
+          .bind(body.lat, body.lng, Number.isFinite(body.acc) ? body.acc : null, now(), me.id));
+        stmts.push(env.DB.prepare('INSERT INTO pings (player_id, game_id, lat, lng, at) VALUES (?, ?, ?, ?, ?)')
+          .bind(me.id, game.id, body.lat, body.lng, now()));
+      } else stmts.push(env.DB.prepare('UPDATE players SET last_seen_at = ? WHERE id = ?').bind(now(), me.id));
     }
+    // Teammates' latest spots, read fresh every time (they move without changing the game version).
+    stmts.push(env.DB.prepare('SELECT id, name, last_lat AS lat, last_lng AS lng, last_seen_at AS seen_at FROM players WHERE game_id = ? AND team_id = ? AND id != ? AND last_lat IS NOT NULL')
+      .bind(game.id, me.team_id, me.id));
+    const res = await env.DB.batch(stmts);
+    const mates = res[res.length - 1].results;
+    const v = tag(game);
+    if (body.v === v) return json({ same: true, v, mates, now: now() });
     const s = await gameState(env, game);
-    return json({ ...playerView(s, me), me: { id: me.id, name: me.name, team_id: me.team_id }, now: now() });
+    return json({ ...playerView(s, me, mates), v, me: { id: me.id, name: me.name, team_id: me.team_id }, now: now() });
   }
 
   if (path === '/api/checkin' && method === 'POST') {
@@ -327,7 +343,7 @@ async function player(request, env, url) {
         .bind(...row, me.team_id, photo.id).run();
       if (!ins.meta.changes) return json({ result: 'already' });
     }
-    bust(game.id);
+    await bump(env, game.id);
     return json({ result: 'submitted' });
   }
 
@@ -374,7 +390,6 @@ async function admin(request, env, url) {
       env.DB.prepare('SELECT id, team_id, name, last_lat, last_lng, last_accuracy, last_seen_at FROM players WHERE game_id = ? ORDER BY created_at').bind(game.id),
       env.DB.prepare("SELECT * FROM finds WHERE game_id = ? AND status != 'replaced' ORDER BY created_at DESC").bind(game.id),
     ]);
-    bust(game.id); // admin always sees fresh scores
     const s = await gameState(env, game);
     return json({
       game: { ...game, status: effectiveStatus(game), boundary: game.boundary_geojson ? JSON.parse(game.boundary_geojson) : null },
@@ -412,7 +427,7 @@ async function admin(request, env, url) {
     }
     if (!sets.length) return json({ error: 'Nothing to change' }, 400);
     await env.DB.prepare(`UPDATE games SET ${sets.join(', ')} WHERE id = ?`).bind(...vals, game.id).run();
-    bust(game.id);
+    await bump(env, game.id);
     return json({ ok: true });
   }
 
@@ -428,7 +443,7 @@ async function admin(request, env, url) {
       if (used.n) return json({ error: 'Move the players off this team first.' }, 400);
       await env.DB.prepare('DELETE FROM teams WHERE id = ? AND game_id = ?').bind(parts[1], game.id).run();
     }
-    bust(game.id);
+    await bump(env, game.id);
     return json({ ok: true });
   }
 
@@ -445,7 +460,7 @@ async function admin(request, env, url) {
       await env.DB.prepare(
         'INSERT INTO photos (id, game_id, title, difficulty, points, lat, lng, radius_m, image_key, thumb_key, sort) VALUES (?, ?, ?, 1, 1, ?, ?, 40, ?, ?, ?)'
       ).bind(pid, game.id, form.get('title') || null, lat, lng, imageKey, thumbKey, sort.n).run();
-      bust(game.id);
+      await bump(env, game.id);
       return json({ ok: true, id: pid });
     }
     if (method === 'PATCH' && !parts[1]) {
@@ -458,7 +473,7 @@ async function admin(request, env, url) {
       const res = await env.DB.prepare(`UPDATE photos SET radius_m = ? WHERE game_id = ?${d ? ' AND difficulty = ?' : ''}`).bind(...[r, game.id, ...(d ? [d] : [])]).run();
       const ids = (await env.DB.prepare(`SELECT id FROM photos WHERE game_id = ?${d ? ' AND difficulty = ?' : ''}`).bind(...[game.id, ...(d ? [d] : [])]).all()).results.map((x) => x.id);
       const rechecked = await recheck(env, game.id, ids);
-      bust(game.id);
+      await bump(env, game.id);
       return json({ ok: true, photos: res.meta.changes, rechecked });
     }
     if (method === 'PATCH') {
@@ -485,7 +500,7 @@ async function admin(request, env, url) {
       await env.DB.prepare(`UPDATE photos SET ${sets.join(', ')} WHERE id = ? AND game_id = ?`).bind(...vals, parts[1], game.id).run();
       // A new radius or a moved pin changes which answers are close enough.
       const rechecked = (b.radius_m !== undefined || b.lat !== undefined || b.lng !== undefined) ? await recheck(env, game.id, [parts[1]]) : 0;
-      bust(game.id);
+      await bump(env, game.id);
       return json({ ok: true, rechecked });
     }
     if (method === 'DELETE') {
@@ -493,7 +508,7 @@ async function admin(request, env, url) {
         env.DB.prepare('DELETE FROM finds WHERE photo_id = ? AND game_id = ?').bind(parts[1], game.id),
         env.DB.prepare('DELETE FROM photos WHERE id = ? AND game_id = ?').bind(parts[1], game.id),
       ]);
-      bust(game.id);
+      await bump(env, game.id);
       return json({ ok: true });
     }
   }
@@ -527,19 +542,23 @@ async function admin(request, env, url) {
     } else if (method === 'DELETE') {
       await env.DB.prepare('DELETE FROM finds WHERE id = ? AND game_id = ?').bind(parts[1], game.id).run();
     }
-    bust(game.id);
+    await bump(env, game.id);
     return json({ ok: true });
   }
 
   // Everything the TV at home base shows: live map, every submission and judgment, real scores.
   if (path === '/tv' && method === 'GET') {
     const since = Number(url.searchParams.get('since')) || 0;
-    const [s, pings] = await Promise.all([
-      gameState(env, game),
+    const [pings, players] = await env.DB.batch([
       env.DB.prepare('SELECT player_id, lat, lng, at FROM pings WHERE game_id = ? AND at > ? ORDER BY at LIMIT 8000')
-        .bind(game.id, Math.max(since, now() - 6 * 3600000)).all(),
+        .bind(game.id, Math.max(since, now() - 6 * 3600000)),
+      env.DB.prepare('SELECT id, team_id, name, last_lat, last_lng, last_seen_at FROM players WHERE game_id = ? ORDER BY created_at').bind(game.id),
     ]);
-    return json({ ...s, pings: pings.results, now: now() });
+    const v = tag(game);
+    // Nothing new since the TV's last look: just the moving dots.
+    if (url.searchParams.get('v') === v) return json({ same: true, v, players: players.results, pings: pings.results, now: now() });
+    const s = await gameState(env, game);
+    return json({ ...s, players: players.results, v, pings: pings.results, now: now() });
   }
 
   if (parts[0] === 'players' && method === 'PATCH') {
@@ -547,7 +566,7 @@ async function admin(request, env, url) {
     await env.DB.batch([
       env.DB.prepare('UPDATE players SET team_id = ? WHERE id = ? AND game_id = ?').bind(team_id, parts[1], game.id),
     ]);
-    bust(game.id);
+    await bump(env, game.id);
     return json({ ok: true });
   }
 

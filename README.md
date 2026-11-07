@@ -22,6 +22,8 @@ npm run dev        # local server on :8787 (password in .dev.vars)
 npm run deploy     # deploy to workers.dev
 npm run db:remote  # apply schema.sql to a new database
 ```
+Updates: every write bumps `games.version`; phones poll every 4 s and the TV every 3 s with the last version they saw, and get a tiny "nothing new" reply until it changes. Locations are saved every 12 s.
+
 Existing databases: apply each file in `migrations/` once, e.g.
 `npx wrangler d1 execute photo-hunt-db --remote --file=migrations/001-hidden-results.sql`
 

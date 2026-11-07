@@ -1,7 +1,7 @@
 // Player app. Plain JS, no build step. Three views (Photos, Map, Scores) plus a photo detail.
 (() => {
-  const POLL_MS = 15000;
-  const LOC_MS = 30000;
+  const POLL_MS = 4000;   // quick check for news; the server answers "nothing new" cheaply
+  const LOC_MS = 15000;   // how often to read the phone's location in the background
   const DIFF = { 1: 'Easy', 2: 'Medium', 3: 'Hard' };
   // Base map: Esri Topographic (calm gray, street names, subway stations, house numbers up close).
   // If its tiles keep failing, switch to OpenStreetMap automatically.
@@ -289,19 +289,35 @@
 
   async function poll() {
     if (!S.token) return;
+    if (S.polling) { S.pollAgain = true; return; } // e.g. right after sending a photo: check again when this one finishes
+    if (document.hidden && S.data) return; // phone locked or app in the background
+    S.polling = true;
     try {
       const body = S.fix && Date.now() - S.fix.at < 60000 ? { lat: S.fix.lat, lng: S.fix.lng, acc: S.fix.acc } : {};
+      if (S.data && S.v) body.v = S.v; // "I already have this version"
       const d = await api('/api/poll', body, { timeout: 12000 });
       S.offset = d.now - Date.now();
-      S.data = d; S.offline = false;
-      announce(d);
-      renderAll();
+      const wasOffline = S.offline;
+      S.offline = false;
+      if (d.same && S.data) {
+        // Nothing changed: just move teammates' dots.
+        S.data.mates = d.mates;
+        if (S.view === 'map') updateMates();
+        if (wasOffline) renderTop();
+      } else {
+        S.data = d; S.v = d.v;
+        announce(d);
+        renderAll();
+      }
       flushQueue();
     } catch (e) {
       if (!e.handled) {
         S.offline = true; renderTop();
         if (!S.data) $('#vPhotos').innerHTML = '<div class="empty">Can\'t reach the game right now. Check your signal. Trying again…</div>';
       }
+    } finally {
+      S.polling = false;
+      if (S.pollAgain) { S.pollAgain = false; poll(); }
     }
   }
 

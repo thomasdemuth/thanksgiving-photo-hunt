@@ -2,7 +2,7 @@
 // showing the photos they've sent, and a big pop-up whenever a new photo comes in.
 // Uses the admin password (shared with /admin on this browser).
 (() => {
-  const POLL_MS = 4000;
+  const POLL_MS = 3000;  // the server answers "nothing new" cheaply, so check often
   const POP_MS = 9000;       // how long a new photo stays on screen
   const STALE_MS = 5 * 60000;
   const DIFF = { 1: 'Easy', 2: 'Medium', 3: 'Hard' };
@@ -126,7 +126,15 @@
     if (T.busy || !T.pw || document.hidden) return;
     T.busy = true;
     try {
-      let d = await api('/tv?since=' + T.lastPing);
+      let d = await api('/tv?since=' + T.lastPing + (T.v && T.d ? '&v=' + encodeURIComponent(T.v) : ''));
+      if (d.same && T.d) {
+        // Nothing changed except people moving: update dots, trails and the clock.
+        T.offset = d.now - Date.now();
+        for (const p of d.pings || []) { (T.pings[p.player_id] ||= []).push([p.lat, p.lng]); if (p.at > T.lastPing) T.lastPing = p.at; }
+        T.d.players = d.players; T.d.now = d.now; T.down = false;
+        renderPlayers(); renderClock(); renderStatus();
+        return;
+      }
       // A new game, or the admin reset this one: start the trails and pop-ups over.
       const key = d.game ? d.game.id + ':' + (d.game.started_at || 0) : null;
       if (d.game && key !== T.gameKey) {
@@ -140,7 +148,7 @@
         (T.pings[p.player_id] ||= []).push([p.lat, p.lng]);
         if (p.at > T.lastPing) T.lastPing = p.at;
       }
-      T.d = d; T.down = false;
+      T.d = d; T.v = d.v; T.down = false;
       render();
     } catch (e) {
       if (!e.auth) { T.down = true; renderClock(); }
@@ -174,8 +182,7 @@
     const d = T.d;
     if (!d.game) { $('#over').innerHTML = '<div class="map-over"><div><h1>No game yet</h1><p>Create one on the admin page.</p></div></div>'; return; }
     $('#title').textContent = '🦃 ' + d.game.name;
-    const out = d.players.filter((p) => p.last_seen_at && d.now - p.last_seen_at < STALE_MS).length;
-    $('#status').textContent = d.game.status === 'live' ? `${out} of ${d.players.length} players out hunting` : `${d.players.length} players`;
+    renderStatus();
     renderClock();
     if (changed('area', JSON.stringify(d.game.boundary))) drawArea();
     renderTeams(); renderPlayers(); renderOverlay();
@@ -183,6 +190,12 @@
     const rkey = d.game.id + ':' + d.game.revealed;
     if (d.game.revealed && T.revealShownFor !== rkey) { T.revealShownFor = rkey; showReveal(); }
     if (!d.game.revealed) { $('#reveal')?.remove(); T.revealShownFor = null; }
+  }
+
+  function renderStatus() {
+    const d = T.d;
+    const out = d.players.filter((p) => p.last_seen_at && d.now - p.last_seen_at < STALE_MS).length;
+    $('#status').textContent = d.game.status === 'live' ? `${out} of ${d.players.length} players out hunting` : `${d.players.length} players`;
   }
 
   function renderClock() {
