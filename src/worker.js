@@ -79,45 +79,58 @@ function effectiveStatus(game) {
   return game.status;
 }
 
-// Shared state for one game: teams with scores, photos (no locations), finds.
+// Find statuses. Players never see these until the admin reveals results.
+//   auto     = taken within the photo's radius (counts)
+//   pending  = close call, waiting for the judge
+//   far      = too far away (doesn't count unless the judge approves it)
+//   approved / rejected = the judge's call
+//   replaced = the team submitted this photo again; only the newest answer counts
+const COUNTS = new Set(['auto', 'approved']);
+
+// Shared state for one game. Holds everything (locations, statuses); callers decide what each viewer may see.
 async function gameState(env, game) {
+  // The cache entry is tied to the game row, so a reveal/hide/end seen by any request skips stale data.
+  const ver = [game.status, game.ends_at, game.revealed_at, game.started_at].join('|');
   const hit = stateCache.get(game.id);
-  if (hit && now() - hit.at < STATE_TTL_MS) return hit.data;
+  if (hit && hit.ver === ver && now() - hit.at < STATE_TTL_MS) return hit.data;
   const [teams, photos, finds, players] = await env.DB.batch([
     env.DB.prepare('SELECT id, name, color FROM teams WHERE game_id = ? ORDER BY rowid').bind(game.id),
     env.DB.prepare('SELECT id, title, difficulty, points, hint, image_key, thumb_key FROM photos WHERE game_id = ? ORDER BY sort, rowid').bind(game.id),
-    env.DB.prepare(`SELECT f.id, f.photo_id, f.team_id, f.status, f.lat, f.lng, f.created_at, p.name AS player_name
+    env.DB.prepare(`SELECT f.id, f.photo_id, f.team_id, f.player_id, f.status, f.lat, f.lng, f.accuracy_m, f.distance_m, f.proof_key,
+                           f.created_at, f.judged_at, f.rowid AS seq, p.name AS player_name
                     FROM finds f LEFT JOIN players p ON p.id = f.player_id
-                    WHERE f.game_id = ? AND f.status != 'rejected' ORDER BY f.created_at`).bind(game.id),
-    env.DB.prepare('SELECT team_id, name FROM players WHERE game_id = ? ORDER BY created_at').bind(game.id),
+                    WHERE f.game_id = ? AND f.status != 'replaced' ORDER BY f.created_at, f.rowid`).bind(game.id),
+    env.DB.prepare('SELECT id, team_id, name, last_lat, last_lng, last_seen_at FROM players WHERE game_id = ? ORDER BY created_at').bind(game.id),
   ]);
   const pts = Object.fromEntries(photos.results.map((p) => [p.id, p.points]));
   const diff = Object.fromEntries(photos.results.map((p) => [p.id, p.difficulty]));
   const scored = teams.results.map((t) => {
-    // Each photo counts once per team, even if two rows slipped in (finds are sorted oldest first).
+    const all = finds.results.filter((f) => f.team_id === t.id);
+    // Each photo counts once per team, even if two rows slipped in.
     const seen = new Set();
-    const mine = finds.results.filter((f) => {
-      if (f.team_id !== t.id || (f.status !== 'auto' && f.status !== 'approved') || seen.has(f.photo_id)) return false;
-      seen.add(f.photo_id);
-      return true;
-    });
+    const mine = all.filter((f) => COUNTS.has(f.status) && !seen.has(f.photo_id) && seen.add(f.photo_id));
+    const members = players.results.filter((p) => p.team_id === t.id);
     return {
       ...t,
-      members: players.results.filter((p) => p.team_id === t.id).map((p) => p.name),
-      players: players.results.filter((p) => p.team_id === t.id).length,
+      members: members.map((p) => p.name),
+      players: members.length,
+      // What players see during the game: how many photos each person and team has submitted.
+      roster: members.map((p) => ({ name: p.name, submitted: all.filter((f) => f.player_id === p.id).length })),
+      submitted: new Set(all.map((f) => f.photo_id)).size,
+      // Same, but without finds the judge added by hand (those are always a yes, so players mustn't see them early).
+      sent: new Set(all.filter((f) => f.player_id).map((f) => f.photo_id)).size,
+      // Hidden until the reveal.
       score: mine.reduce((s, f) => s + (pts[f.photo_id] || 0), 0),
       found: mine.length,
-      // Found counts by difficulty: [easy, medium, hard].
-      by_diff: [1, 2, 3].map((d) => mine.filter((f) => diff[f.photo_id] === d).length),
-      // Tie-break: whoever reached their score first.
-      reached_at: mine.length ? Math.max(...mine.map((f) => f.created_at)) : 0,
+      by_diff: [1, 2, 3].map((d) => mine.filter((f) => diff[f.photo_id] === d).length), // [easy, medium, hard]
+      reached_at: mine.length ? Math.max(...mine.map((f) => f.created_at)) : 0, // tie-break: who got there first
     };
   });
   scored.sort((a, b) => b.score - a.score || a.reached_at - b.reached_at);
   const data = {
     game: {
       id: game.id, name: game.name, status: effectiveStatus(game), boundary: game.boundary_geojson ? JSON.parse(game.boundary_geojson) : null,
-      started_at: game.started_at, ends_at: game.ends_at,
+      started_at: game.started_at, ends_at: game.ends_at, revealed: !!game.revealed_at,
     },
     teams: scored,
     photos: photos.results.map((p) => ({
@@ -125,9 +138,40 @@ async function gameState(env, game) {
       thumb: `/img/${p.thumb_key}`, image: `/img/${p.image_key}`,
     })),
     finds: finds.results,
+    players: players.results,
   };
-  stateCache.set(game.id, { at: now(), data });
+  stateCache.set(game.id, { at: now(), ver, data });
   return data;
+}
+
+// What one player is allowed to see. Before the reveal: no scores, no right/wrong, and other
+// teams' finds only as anonymous "Team Red found something" events.
+function playerView(s, me) {
+  const revealed = s.game.revealed;
+  const teams = s.teams.map((t) => {
+    const base = { id: t.id, name: t.name, color: t.color, members: t.members, players: t.players, roster: t.roster, submitted: revealed ? t.submitted : t.sent };
+    return revealed ? { ...base, score: t.score, found: t.found, by_diff: t.by_diff } : base;
+  });
+  if (!revealed) teams.sort((a, b) => b.submitted - a.submitted);
+  // Before the reveal, hand-added finds (no player) stay hidden: they'd give away a yes.
+  const visible = revealed ? s.finds : s.finds.filter((f) => f.player_id);
+  const finds = visible
+    .filter((f) => revealed || f.team_id === me.team_id)
+    .map((f) => {
+      const mine = f.team_id === me.team_id;
+      return {
+        id: f.id, photo_id: f.photo_id, team_id: f.team_id, player_name: f.player_name, created_at: f.created_at,
+        // Other teams' spots would give away photo locations.
+        lat: mine ? f.lat : null, lng: mine ? f.lng : null, by_me: f.player_id === me.id,
+        ...(revealed ? { counted: COUNTS.has(f.status) } : {}),
+      };
+    });
+  const mates = s.players
+    .filter((p) => p.team_id === me.team_id && p.id !== me.id && p.last_lat != null)
+    .map((p) => ({ id: p.id, name: p.name, lat: p.last_lat, lng: p.last_lng, seen_at: p.last_seen_at }));
+  // Newest arrivals (by insert order, so late offline photos still pop up).
+  const events = [...visible].sort((a, b) => a.seq - b.seq).slice(-40).map((f) => ({ id: f.id, team_id: f.team_id, at: f.created_at }));
+  return { game: s.game, teams, photos: s.photos, finds, mates, events };
 }
 
 async function playerFromToken(env, request) {
@@ -200,9 +244,7 @@ async function player(request, env, url) {
       ] : [env.DB.prepare('UPDATE players SET last_seen_at = ? WHERE id = ?').bind(now(), me.id)]);
     }
     const s = await gameState(env, game);
-    // Other teams' check-in spots would give away photo locations, so strip them.
-    const finds = s.finds.map((f) => (f.team_id === me.team_id ? f : { ...f, lat: null, lng: null }));
-    return json({ ...s, finds, me: { id: me.id, name: me.name, team_id: me.team_id }, now: now() });
+    return json({ ...playerView(s, me), me: { id: me.id, name: me.name, team_id: me.team_id }, now: now() });
   }
 
   if (path === '/api/checkin' && method === 'POST') {
@@ -212,7 +254,7 @@ async function player(request, env, url) {
     const photoId = form.get('photo_id');
     const lat = Number(form.get('lat')), lng = Number(form.get('lng'));
     const acc = Number(form.get('acc')) || null;
-    const askJudge = form.get('ask_judge') === '1';
+    const replace = form.get('replace') === '1';
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return json({ error: "We couldn't get your location. Please try again." }, 400);
 
     const game = await currentGame(env);
@@ -220,7 +262,9 @@ async function player(request, env, url) {
     const status = effectiveStatus(game);
     if (status === 'setup') return json({ result: 'not_started' });
     // A check-in saved offline before the end still counts if it arrives within 30 minutes.
-    const takenAt = Number(form.get('at')) || now();
+    // Clamp the phone's timestamp so it can't be backdated to win a tie-break.
+    const takenAt = Math.min(now(), Math.max(now() - 30 * 60000, Number(form.get('at')) || now()));
+    if (game.revealed_at) return json({ result: 'ended' }); // results are out: nothing can change them now
     const lateOk = game.ends_at && takenAt <= game.ends_at && takenAt >= (game.started_at || 0) && now() - game.ends_at < 30 * 60000;
     if (status === 'ended' && !lateOk) return json({ result: 'ended' });
 
@@ -228,29 +272,39 @@ async function player(request, env, url) {
     if (!photo) return json({ error: 'That photo is no longer in the game.' }, 404);
     if (photo.lat == null) return json({ error: 'This photo has no spot set yet. Tell the organizer.' }, 400);
 
-    const prior = await env.DB.prepare(
-      "SELECT status FROM finds WHERE team_id = ? AND photo_id = ? AND status IN ('auto','approved','pending')"
-    ).bind(me.team_id, photo.id).all();
-    if (prior.results.some((f) => f.status !== 'pending')) return json({ result: 'already' });
-    if (prior.results.length) return json({ result: 'pending_exists' });
+    // One answer per team per photo. "Submit again" replaces it; only the newest answer counts.
+    const prior = await env.DB.prepare("SELECT 1 FROM finds WHERE team_id = ? AND photo_id = ? AND status != 'replaced' LIMIT 1")
+      .bind(me.team_id, photo.id).first();
+    if (prior && !replace) return json({ result: 'already' });
 
+    // Marked yes/no here, but the player only hears "submitted" until the reveal.
     const distance = Math.round(haversine(lat, lng, photo.lat, photo.lng));
-    let result;
-    if (distance <= photo.radius_m) result = 'auto';
-    else if (distance <= photo.radius_m * 2 || askJudge) result = 'pending';
-    // Rounded so a far answer can't be used to triangulate the spot.
-    else return json({ result: 'far', distance: Math.max(100, Math.round(distance / 50) * 50) });
+    const slack = Math.max(photo.radius_m * 2, photo.radius_m + Math.min(acc || 0, 60)); // poor GPS between tall buildings
+    const verdict = distance <= photo.radius_m ? 'auto' : distance <= slack ? 'pending' : 'far';
 
     const proofKey = await putImage(env, form.get('proof'), 'proof');
-    // Insert only if the team has no counted or pending find for this photo (guards against two teammates tapping at once).
-    const ins = await env.DB.prepare(
-      `INSERT INTO finds (id, game_id, photo_id, team_id, player_id, lat, lng, accuracy_m, distance_m, proof_key, status, created_at)
-       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-       WHERE NOT EXISTS (SELECT 1 FROM finds WHERE team_id = ? AND photo_id = ? AND status IN ('auto','approved','pending'))`
-    ).bind(id(), game.id, photo.id, me.team_id, me.id, lat, lng, acc, distance, proofKey, result, Math.min(takenAt, now()), me.team_id, photo.id).run();
-    if (!ins.meta.changes) return json({ result: 'already' });
+    const row = [id(), game.id, photo.id, me.team_id, me.id, lat, lng, acc, distance, proofKey, verdict, Math.min(takenAt, now())];
+    const insert = `INSERT INTO finds (id, game_id, photo_id, team_id, player_id, lat, lng, accuracy_m, distance_m, proof_key, status, created_at)`;
+    if (replace) {
+      // One transaction, so two "submit again" taps still leave exactly one answer. The newest picture
+      // (by when it was taken) wins: a late offline one doesn't overwrite a teammate's newer answer.
+      const at = row[11];
+      await env.DB.batch([
+        env.DB.prepare(`${insert} SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            CASE WHEN EXISTS (SELECT 1 FROM finds WHERE team_id = ? AND photo_id = ? AND status != 'replaced' AND created_at > ?) THEN 'replaced' ELSE ? END, ?`)
+          .bind(...row.slice(0, 10), me.team_id, photo.id, at, verdict, at),
+        env.DB.prepare("UPDATE finds SET status = 'replaced' WHERE team_id = ? AND photo_id = ? AND status != 'replaced' AND created_at <= ? AND id != ?")
+          .bind(me.team_id, photo.id, at, row[0]),
+      ]);
+    } else {
+      // Guards against two teammates tapping at once.
+      const ins = await env.DB.prepare(`${insert} SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+         WHERE NOT EXISTS (SELECT 1 FROM finds WHERE team_id = ? AND photo_id = ? AND status != 'replaced')`)
+        .bind(...row, me.team_id, photo.id).run();
+      if (!ins.meta.changes) return json({ result: 'already' });
+    }
     bust(game.id);
-    return json({ result, distance, points: photo.points });
+    return json({ result: 'submitted' });
   }
 
   return json({ error: 'Not found' }, 404);
@@ -294,7 +348,7 @@ async function admin(request, env, url) {
       env.DB.prepare('SELECT * FROM teams WHERE game_id = ? ORDER BY rowid').bind(game.id),
       env.DB.prepare('SELECT * FROM photos WHERE game_id = ? ORDER BY sort, rowid').bind(game.id),
       env.DB.prepare('SELECT id, team_id, name, last_lat, last_lng, last_accuracy, last_seen_at FROM players WHERE game_id = ? ORDER BY created_at').bind(game.id),
-      env.DB.prepare('SELECT * FROM finds WHERE game_id = ? ORDER BY created_at DESC').bind(game.id),
+      env.DB.prepare("SELECT * FROM finds WHERE game_id = ? AND status != 'replaced' ORDER BY created_at DESC").bind(game.id),
     ]);
     bust(game.id); // admin always sees fresh scores
     const s = await gameState(env, game);
@@ -310,10 +364,19 @@ async function admin(request, env, url) {
     const sets = [], vals = [];
     if (b.name !== undefined) { sets.push('name = ?'); vals.push(String(b.name).slice(0, 60)); }
     if (b.boundary !== undefined) { sets.push('boundary_geojson = ?'); vals.push(b.boundary ? JSON.stringify(b.boundary === 'default' ? DEFAULT_BOUNDARY : b.boundary) : null); }
-    if (b.action === 'start') { sets.push("status = 'live'", 'started_at = ?', 'ends_at = ?'); vals.push(now(), b.minutes ? now() + b.minutes * 60000 : null); }
-    if (b.action === 'end') { sets.push("status = 'ended'", 'ends_at = ?'); vals.push(now()); }
-    if (b.action === 'reopen') { sets.push("status = 'live'", 'ends_at = NULL'); }
-    if (b.action === 'setup') { sets.push("status = 'setup'", 'started_at = NULL', 'ends_at = NULL'); }
+    if (b.action === 'start') {
+      // Starting twice would reset the clock, so only start a game that isn't live.
+      if (effectiveStatus(game) === 'live') return json({ error: 'The game is already live.' }, 400);
+      sets.push("status = 'live'", 'started_at = ?', 'ends_at = ?', 'revealed_at = NULL'); vals.push(now(), b.minutes ? now() + b.minutes * 60000 : null);
+    }
+    if (b.action === 'end') { sets.push("status = 'ended'", 'ends_at = ?'); vals.push(Math.min(now(), game.ends_at || Infinity)); }
+    if (b.action === 'reopen') { sets.push("status = 'live'", 'ends_at = NULL', 'revealed_at = NULL'); }
+    if (b.action === 'setup') { sets.push("status = 'setup'", 'started_at = NULL', 'ends_at = NULL', 'revealed_at = NULL'); }
+    if (b.action === 'reveal') {
+      if (effectiveStatus(game) !== 'ended') return json({ error: 'End the game before revealing the results.' }, 400);
+      sets.push('revealed_at = ?'); vals.push(now());
+    }
+    if (b.action === 'hide') { sets.push('revealed_at = NULL'); }
     if (!sets.length) return json({ error: 'Nothing to change' }, 400);
     await env.DB.prepare(`UPDATE games SET ${sets.join(', ')} WHERE id = ?`).bind(...vals, game.id).run();
     bust(game.id);
@@ -391,23 +454,35 @@ async function admin(request, env, url) {
     if (method === 'POST' && !parts[1]) {
       // Manual fix: give a team a find.
       const { photo_id, team_id } = await request.json();
-      // If the team has a pending find for this photo, approve it; skip if they already have it.
-      const pend = await env.DB.prepare("UPDATE finds SET status = 'approved' WHERE team_id = ? AND photo_id = ? AND game_id = ? AND status = 'pending'").bind(team_id, photo_id, game.id).run();
-      if (!pend.meta.changes) {
+      // If the team already answered this photo, approve that answer; otherwise add an approved one.
+      const upd = await env.DB.prepare("UPDATE finds SET status = 'approved', judged_at = ? WHERE team_id = ? AND photo_id = ? AND game_id = ? AND status IN ('pending','far','rejected')")
+        .bind(now(), team_id, photo_id, game.id).run();
+      if (!upd.meta.changes) {
         await env.DB.prepare(
-          `INSERT INTO finds (id, game_id, photo_id, team_id, status, created_at) SELECT ?, ?, ?, ?, 'approved', ?
-           WHERE NOT EXISTS (SELECT 1 FROM finds WHERE team_id = ? AND photo_id = ? AND status IN ('auto','approved'))`
-        ).bind(id(), game.id, photo_id, team_id, now(), team_id, photo_id).run();
+          `INSERT INTO finds (id, game_id, photo_id, team_id, status, created_at, judged_at) SELECT ?, ?, ?, ?, 'approved', ?, ?
+           WHERE NOT EXISTS (SELECT 1 FROM finds WHERE team_id = ? AND photo_id = ? AND status != 'replaced')`
+        ).bind(id(), game.id, photo_id, team_id, now(), now(), team_id, photo_id).run();
       }
     } else if (method === 'PATCH') {
       const { status } = await request.json();
       if (!['approved', 'rejected'].includes(status)) return json({ error: 'Bad status' }, 400);
-      await env.DB.prepare('UPDATE finds SET status = ? WHERE id = ? AND game_id = ?').bind(status, parts[1], game.id).run();
+      await env.DB.prepare("UPDATE finds SET status = ?, judged_at = ? WHERE id = ? AND game_id = ? AND status != 'replaced'").bind(status, now(), parts[1], game.id).run();
     } else if (method === 'DELETE') {
       await env.DB.prepare('DELETE FROM finds WHERE id = ? AND game_id = ?').bind(parts[1], game.id).run();
     }
     bust(game.id);
     return json({ ok: true });
+  }
+
+  // Everything the TV at home base shows: live map, every submission and judgment, real scores.
+  if (path === '/tv' && method === 'GET') {
+    const since = Number(url.searchParams.get('since')) || 0;
+    const [s, pings] = await Promise.all([
+      gameState(env, game),
+      env.DB.prepare('SELECT player_id, lat, lng, at FROM pings WHERE game_id = ? AND at > ? ORDER BY at LIMIT 8000')
+        .bind(game.id, Math.max(since, now() - 6 * 3600000)).all(),
+    ]);
+    return json({ ...s, pings: pings.results, now: now() });
   }
 
   if (parts[0] === 'players' && method === 'PATCH') {

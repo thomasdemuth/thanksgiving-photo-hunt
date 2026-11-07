@@ -62,8 +62,11 @@ for (const pl of players) {
   for (const p of picks) {
     const fd = new FormData();
     fd.append('photo_id', p.id);
-    const far = Math.random() < 0.2;
-    fd.append('lat', p.lat + (far ? 0.0005 : 0.0001)); fd.append('lng', p.lng); fd.append('acc', 12);
+    // Mostly right, some close calls (judge), some wrong spots (marked no).
+    const r = Math.random();
+    fd.append('lat', p.lat + (r < 0.7 ? 0.0001 : r < 0.85 ? 0.0006 : 0.003)); fd.append('lng', p.lng); fd.append('acc', 12);
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect width="400" height="300" fill="hsl(${(Math.random() * 360) | 0},40%,55%)"/><text x="200" y="165" font-size="40" text-anchor="middle" fill="#fff" font-family="Helvetica">${pl.player.name}'s shot</text></svg>`;
+    fd.append('proof', new Blob([svg], { type: 'image/svg+xml' }), 'proof.svg');
     await pub('/api/checkin', fd, pl.token);
   }
   const s = spots[(Math.random() * 59) | 0];

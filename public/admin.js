@@ -68,7 +68,7 @@
       <div class="wrap" id="body"></div>`;
     document.querySelectorAll('[data-tab]').forEach((b) => b.onclick = () => show(b.dataset.tab));
     await refresh();
-    show(A.d?.game?.status === 'live' ? 'live' : 'setup');
+    show(['live', 'ended'].includes(A.d?.game?.status) ? 'live' : 'setup');
     // One refresh loop for the whole page; it pauses while signed out.
     if (!A.timer) A.timer = setInterval(() => {
       if (A.pw && A.d?.game && (A.tab === 'live' || A.tab === 'results') && !document.hidden) refresh().then(() => render()).catch(() => {});
@@ -79,7 +79,7 @@
 
   function renderStatus() {
     const g = A.d?.game;
-    $('#status').innerHTML = g ? `<span class="status ${g.status}">${{ setup: 'Not started', live: 'Live', ended: 'Ended' }[g.status]}</span>` : '';
+    $('#status').innerHTML = g ? `<a class="btn btn-small tv-link" href="/tv" target="_blank">📺 TV view</a> <span class="status ${g.status}">${{ setup: 'Not started', live: 'Live', ended: g.revealed_at ? 'Ended · results revealed' : 'Ended · results hidden' }[g.status]}</span>` : '';
   }
 
   function show(tab) {
@@ -400,9 +400,9 @@
           <div class="stack">
             <div class="card"><div class="row" style="align-items:flex-start;gap:1em">
               <div class="grow stack" id="controls"></div>
-              <div style="width:130px;text-align:center"><div class="qr">${qrSvg(playerUrl)}</div><button class="btn-small" id="tvBtn" style="margin-top:.4em;width:100%">📺 Show on TV</button></div>
+              <div style="width:130px;text-align:center"><div class="qr">${qrSvg(playerUrl)}</div><button class="btn-small" id="tvBtn" style="margin-top:.4em;width:100%">Big join code</button><a class="btn btn-small" href="/tv" target="_blank" style="margin-top:.3em;width:100%">📺 Live TV view</a></div>
             </div></div>
-            <div class="card"><h2>Judge queue <span class="count" id="jCount">0</span></h2><div id="judge"></div></div>
+            <div class="card"><h2>Judge queue <span class="count" id="jCount">0</span></h2><p class="small muted" style="margin:-.2em 0 .6em">Players never see yes or no until you reveal the results.</p><div id="judge"></div><div id="farList"></div></div>
             <div class="card"><h2>Activity</h2><div id="manual"></div><div class="feed" id="feed"></div></div>
           </div>
           <div class="stack">
@@ -422,7 +422,8 @@
     const changed = (key, val) => { if (!full && A.sig?.[key] === val) return false; (A.sig ||= {})[key] = val; return true; };
     $('#tiles').innerHTML = scoreTiles();
 
-    if (changed('controls', game.status + '|' + game.ends_at)) {
+    const waiting = finds.filter((f) => f.status === 'pending').length;
+    if (changed('controls', game.status + '|' + game.ends_at + '|' + game.revealed_at + '|' + waiting)) {
       $('#controls').innerHTML = game.status === 'setup' ? `
         <h2>Ready to start?</h2>
         <p class="small muted" style="margin:0"><span id="joinedLine"></span> Scan the code to join.</p>
@@ -432,7 +433,14 @@
         <h2>The game is live</h2>
         <p class="small muted" style="margin:0">${game.ends_at ? `Ends at ${new Date(game.ends_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.` : 'No timer. End it when everyone is back.'}</p>
         <button class="btn-big btn-bad" id="endBtn">■ End the game</button>`
-        : `<h2>The game is over</h2><div class="row"><button id="reopenBtn">Reopen</button><button id="setupBtn">Back to not started</button></div>`;
+        : !game.revealed_at ? `
+        <h2>The game is over</h2>
+        <p class="small muted" style="margin:0">Players can't see the results yet.${waiting ? ` <b class="error">${waiting} still waiting for the judge</b>, and they won't count unless approved.` : ''} Photos taken before the end can still arrive for 30 minutes.</p>
+        <button class="btn-ok btn-big" id="revealBtn">🎉 Reveal the results</button>
+        <div class="row"><button class="btn-small" id="reopenBtn">Reopen the game</button><button class="btn-small" id="setupBtn">Back to not started</button></div>`
+        : `<h2>Results revealed</h2>
+        <p class="small muted" style="margin:0">Everyone can see the scores and what counted, on their phones and the TV.</p>
+        <div class="row"><button class="btn-small" id="hideBtn">Hide the results again</button><button class="btn-small" id="reopenBtn">Reopen the game</button></div>`;
       const act = (btn, body, ask, after) => btn && (btn.onclick = async () => {
         if (ask && !confirm(ask)) return;
         btn.disabled = true;
@@ -440,8 +448,10 @@
         after ? after() : render();
       });
       act($('#startBtn'), () => ({ action: 'start', minutes: Number($('#mins').value) || null }), 'Start the game now?');
-      act($('#endBtn'), () => ({ action: 'end' }), 'End the game for everyone?', () => show('results'));
-      act($('#reopenBtn'), () => ({ action: 'reopen' }));
+      act($('#endBtn'), () => ({ action: 'end' }), 'End the game for everyone? Results stay hidden until you press Reveal.');
+      act($('#reopenBtn'), () => ({ action: 'reopen' }), 'Reopen the game? Results will be hidden again.');
+      act($('#revealBtn'), () => ({ action: 'reveal' }), waiting ? `${waiting} answer${waiting > 1 ? 's are' : ' is'} still waiting for the judge and won't count. Reveal anyway?` : 'Reveal the results to everyone now?');
+      act($('#hideBtn'), () => ({ action: 'hide' }));
       act($('#setupBtn'), () => ({ action: 'setup' }), 'Go back to "not started"? Finds stay, but the timer resets.');
     }
     const jl = $('#joinedLine'); if (jl) jl.textContent = `${photos.length} photos · ${players.length} players joined.`;
@@ -454,9 +464,19 @@
       return `<div class="judge-item">
         <div class="judge-pics"><figure><img src="/img/${esc(p?.thumb_key)}"><figcaption>#${numOf(f.photo_id)} · the photo</figcaption></figure>
           <figure>${f.proof_key ? `<a href="/img/${esc(f.proof_key)}" target="_blank"><img src="/img/${esc(f.proof_key)}"></a>` : '<div class="nopic">No picture</div>'}<figcaption>their picture</figcaption></figure></div>
-        <p class="small" style="margin:.2em 0 .5em"><span class="swatch" style="background:${esc(t.color)}"></span> <b>${esc(pl?.name || '?')}</b> (${esc(t.name)}) · ${Math.round(f.distance_m)} m from the spot · GPS ±${Math.round(f.accuracy_m || 0)} m</p>
+        <p class="small" style="margin:.2em 0 .5em"><span class="swatch" style="background:${esc(t?.color)}"></span> <b>${esc(pl?.name || '?')}</b> (${esc(t?.name)}) · ${Math.round(f.distance_m)} m from the spot · GPS ±${Math.round(f.accuracy_m || 0)} m</p>
         <div class="row"><button class="btn-ok grow" data-judge="${f.id}" data-s="approved">✓ Approve</button><button class="btn-bad grow" data-judge="${f.id}" data-s="rejected">✕ Reject</button></div></div>`;
     }).join('') : '<p class="muted small" style="margin:0">Nothing to judge right now.</p>';
+    // Answers taken far from the spot are marked "no" automatically. The judge can still approve one.
+    const far = finds.filter((f) => f.status === 'far');
+    const farOpen = !!$('#farList details')?.open; // keep it open when a new one arrives
+    if (changed('far', far.map((f) => f.id).join())) $('#farList').innerHTML = far.length ? `<details style="margin-top:.8em" ${farOpen ? 'open' : ''}><summary class="small" style="cursor:pointer"><b>Marked no, too far away (${far.length})</b> <span class="muted">· check these if GPS was bad</span></summary>${far.map((f) => {
+      const p = photoOf(f.photo_id), t = teamOf(f.team_id), pl = playerOf(f.player_id);
+      return `<div class="judge-item"><div class="judge-pics"><figure><img src="/img/${esc(p?.thumb_key)}" loading="lazy"><figcaption>#${numOf(f.photo_id)} · the photo</figcaption></figure>
+        <figure>${f.proof_key ? `<a href="/img/${esc(f.proof_key)}" target="_blank"><img src="/img/${esc(f.proof_key)}" loading="lazy"></a>` : '<div class="nopic">No picture</div>'}<figcaption>their picture</figcaption></figure></div>
+        <p class="small" style="margin:.2em 0 .5em"><span class="swatch" style="background:${esc(t?.color)}"></span> <b>${esc(pl?.name || '?')}</b> (${esc(t?.name)}) · ${Math.round(f.distance_m)} m from the spot · GPS ±${Math.round(f.accuracy_m || 0)} m</p>
+        <button class="btn-ok btn-small" data-judge="${f.id}" data-s="approved">✓ Approve anyway</button></div>`;
+    }).join('')}</details>` : '';
     document.querySelectorAll('[data-judge]').forEach((b) => b.onclick = async () => {
       b.closest('.judge-item').querySelectorAll('button').forEach((x) => { x.disabled = true; });
       try { await api('/finds/' + b.dataset.judge, 'PATCH', { status: b.dataset.s }); } finally { await refresh(); render(); }
@@ -489,12 +509,15 @@
     // Feed
     if (changed('feed', finds.map((f) => f.id + f.status).join() + Math.floor(A.d.now / 60000))) $('#feed').innerHTML = finds.length ? finds.slice(0, 60).map((f) => {
       const p = photoOf(f.photo_id), t = teamOf(f.team_id), pl = playerOf(f.player_id);
-      const label = { auto: 'Found', approved: 'Approved', pending: 'Waiting', rejected: 'Rejected' }[f.status];
+      const label = { auto: 'Yes · on the spot', approved: 'Yes · judge', pending: 'Waiting for judge', far: 'No · too far', rejected: 'No · judge' }[f.status] || f.status;
+      const yes = f.status === 'auto' || f.status === 'approved';
       return `<div class="feed-item"><img src="/img/${esc(f.proof_key || p?.thumb_key)}" alt="" loading="lazy">
-        <div class="grow small"><b>${esc(pl?.name || 'Judge')}</b> <span class="swatch" style="background:${esc(t.color)}"></span> ${esc(t.name)} · #${numOf(f.photo_id)} <span class="muted">(${DIFF[p?.difficulty] || ''})</span><br>
+        <div class="grow small"><b>${esc(pl?.name || 'Judge')}</b> <span class="swatch" style="background:${esc(t?.color)}"></span> ${esc(t?.name)} · #${numOf(f.photo_id)} <span class="muted">(${DIFF[p?.difficulty] || ''})</span><br>
         <span class="tag ${f.status}">${label}</span> <span class="muted">${f.distance_m != null ? Math.round(f.distance_m) + ' m · ' : ''}${ago(f.created_at)}</span></div>
+        ${f.status !== 'pending' ? `<button class="btn-small flip" data-flip="${f.id}" data-s="${yes ? 'rejected' : 'approved'}" title="Change the judge's call">${yes ? 'Make it no' : 'Make it yes'}</button>` : ''}
         <button class="x-btn" data-fdel="${f.id}" title="Remove this find">✕</button></div>`;
     }).join('') : '<p class="muted small" style="margin:0">No check-ins yet.</p>';
+    document.querySelectorAll('[data-flip]').forEach((b) => b.onclick = async () => { b.disabled = true; try { await api('/finds/' + b.dataset.flip, 'PATCH', { status: b.dataset.s }); } finally { await refresh(); render(); } });
     document.querySelectorAll('[data-fdel]').forEach((b) => b.onclick = async () => { if (!confirm('Remove this find?')) return; await api('/finds/' + b.dataset.fdel, 'DELETE'); await refresh(); render(); });
 
     // Live map
@@ -517,9 +540,11 @@
   function renderResults() {
     const { scores, finds } = A.d;
     const winner = scores[0];
-    const proofs = finds.filter((f) => f.proof_key && f.status !== 'rejected');
+    const proofs = finds.filter((f) => f.proof_key && (f.status === 'auto' || f.status === 'approved'));
+    const g = A.d.game;
     $('#body').innerHTML = `
-      ${winner ? `<div class="winner" style="background:${esc(winner.color)}"><h1>🏆 ${esc(winner.name)} ${A.d.game.status === 'ended' ? 'wins!' : 'is in the lead'}</h1><p style="margin:0">${winner.score} points · ${winner.found} photos found</p></div>` : ''}
+      ${!g.revealed_at ? `<div class="note" style="margin-bottom:1em">🤫 <b>Players can't see these results yet.</b> ${g.status === 'ended' ? 'When the judge queue is clear, go to Live game and press <b>Reveal the results</b>.' : 'End the game first, then reveal them from the Live game tab.'}</div>` : ''}
+      ${winner ? `<div class="winner" style="background:${esc(winner.color)}"><h1>🏆 ${esc(winner.name)} ${g.revealed_at ? 'wins!' : 'is in the lead'}</h1><p style="margin:0">${winner.score} points · ${winner.found} photos found</p></div>` : ''}
       <div class="row" style="margin-bottom:1em"><button class="btn-primary" id="winBtn">🏆 Show winner on TV</button><button id="csvBtn">⬇ Download results (CSV)</button></div>
       ${scoreTiles()}
       <div class="card"><h2>Proof photos <span class="count">${proofs.length}</span></h2><div class="gallery">${proofs.map((f) => { const t = teamOf(f.team_id); return `<figure><a href="/img/${esc(f.proof_key)}" target="_blank"><img src="/img/${esc(f.proof_key)}" loading="lazy"></a><figcaption><span class="swatch" style="background:${esc(t.color)}"></span> ${esc(playerOf(f.player_id)?.name || '')} · #${numOf(f.photo_id)}</figcaption></figure>`; }).join('') || '<p class="muted small">None yet.</p>'}</div></div>`;
