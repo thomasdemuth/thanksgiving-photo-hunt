@@ -138,7 +138,7 @@ main.with-tabs { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
 .allow-mock .btns { display: flex; border-top: 1px solid #ccc; margin: .8em -1em -1em; }
 .allow-mock .btns span { flex: 1; padding: .7em; color: #007aff; }
 .allow-mock .btns span + span { border-left: 1px solid #ccc; font-weight: 700; outline: 3px solid var(--orange); outline-offset: -3px; border-radius: 0 0 12px 0; }
-canvas#confetti { position: fixed; inset: 0; pointer-events: none; z-index: 70; }
+canvas#confetti { position: fixed; inset: 0; pointer-events: none; z-index: 95; }
 .tile .badge.no .check { background: var(--red); }
 .list-tools { display: flex; gap: .5em; align-items: center; justify-content: space-between; margin: .5em 0 .7em; }
 .list-tools select { width: auto; min-height: 36px; font-size: .75em; padding: .1em .4em; }
@@ -422,3 +422,19 @@ body.locked { overflow: hidden; }
 .hm-icon { font-size: 3em; line-height: 1; }
 .hm-text { font-size: 1.5em; font-weight: 700; margin: .2em 0 .4em; white-space: pre-wrap; overflow-wrap: anywhere; }
 .player-pin.out { box-shadow: 0 0 0 3px #c0261c, 0 0 10px #c0261c; }
+.rt-toggle { display: flex; gap: .6em; align-items: flex-start; cursor: pointer; }
+.rt-toggle input { width: 1.2em; height: 1.2em; min-height: 0; padding: 0; margin-top: .15em; flex: none; }
+.adult-box { display: inline-flex; align-items: center; gap: .25em; font-size: .75em; font-weight: 700; padding: .15em .5em; border: 1px solid var(--line); border-radius: 99px; cursor: pointer; }
+.adult-box.on { background: #1f1a17; color: #fff; border-color: #1f1a17; }
+.adult-box input { margin: 0; width: auto; min-height: 0; height: auto; padding: 0; }
+.lob-count { font-size: .75em; opacity: .8; font-weight: 400; }
+.team-reveal { position: fixed; inset: 0; z-index: 88; color: #fff; display: flex; align-items: center; justify-content: center; text-align: center; padding: 1.5em; animation: trIn .5s cubic-bezier(.2, 1.3, .4, 1); overflow-y: auto; }
+.tr-in { max-width: 26em; width: 100%; }
+.tr-small { font-size: 1em; opacity: .9; margin: .4em 0; }
+.tr-badge { width: 3.4em; height: 3.4em; margin: .4em auto; border-radius: 50%; background: #fff; font-weight: 700; font-size: 2em; display: flex; align-items: center; justify-content: center; }
+.team-reveal h1 { font-size: 1.6em; margin: .3em 0 .6em; text-shadow: 0 2px 4px rgba(0,0,0,.25); }
+.tr-team { font-size: 1.5em; }
+.tr-mates { display: flex; flex-wrap: wrap; gap: .4em; justify-content: center; margin-bottom: 1.4em; }
+.tr-mates span { background: #fff; color: #111; font-weight: 700; padding: .3em .8em; border-radius: 99px; }
+.team-reveal .btn-big { width: 100%; border-color: #fff; }
+@keyframes trIn { from { opacity: 0; transform: scale(.9); } to { opacity: 1; transform: none; } }

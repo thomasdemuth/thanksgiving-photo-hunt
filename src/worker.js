@@ -4,7 +4,20 @@
 const DEFAULT_TEAMS = [
   ['Red', '#ee352e'], ['Blue', '#0039a6'], ['Green', '#00933c'], ['Orange', '#e8590c'],
 ];
+// Extra teams for "Random teams" when the host asks for more than four.
+const MORE_TEAMS = [['Purple', '#6f42c1'], ['Yellow', '#d4a106'], ['Teal', '#0f8b8d'], ['Pink', '#d63384']];
 const POINTS = { 1: 1, 2: 2, 3: 3 };
+// Random teams: players join without a team and only see theirs once the host reveals the shuffle.
+const teamsHidden = (game) => !!game.random_teams && !game.teams_ready;
+const shuffle = (a) => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+// The team with the fewest players (ties broken at random), for late joiners once teams are picked.
+async function smallestTeam(env, gameId) {
+  const rows = (await env.DB.prepare(`SELECT t.id, (SELECT COUNT(*) FROM players p WHERE p.team_id = t.id AND p.kicked_at IS NULL) AS n
+    FROM teams t WHERE t.game_id = ?`).bind(gameId).all()).results;
+  if (!rows.length) return '';
+  const min = Math.min(...rows.map((r) => r.n));
+  return shuffle(rows.filter((r) => r.n === min))[0].id;
+}
 // Default play area: Canal St (6th Ave to Greenwich), Greenwich St (Canal to Christopher),
 // Christopher St (Greenwich to 6th Ave), 6th Ave (Christopher to Canal). Traced from OpenStreetMap.
 const DEFAULT_BOUNDARY = [[40.721882,-74.005355],[40.723845,-74.008033],[40.724026,-74.008445],[40.724495,-74.008916],[40.724597,-74.00921],[40.724722,-74.009309],[40.726,-74.0091],[40.7296,-74.0084],[40.732877,-74.007514],[40.734146,-73.999182],[40.729621,-74.002232],[40.72212,-74.005379]];
@@ -243,7 +256,7 @@ async function gameState(env, game) {
                            f.created_at, f.judged_at, f.rowid AS seq, p.name AS player_name
                     FROM finds f LEFT JOIN players p ON p.id = f.player_id
                     WHERE f.game_id = ? AND f.status != 'replaced' ORDER BY f.created_at, f.rowid`).bind(game.id),
-    env.DB.prepare('SELECT id, team_id, name FROM players WHERE game_id = ? AND kicked_at IS NULL ORDER BY created_at').bind(game.id),
+    env.DB.prepare('SELECT id, team_id, name, adult FROM players WHERE game_id = ? AND kicked_at IS NULL ORDER BY created_at').bind(game.id),
   ]);
   const pts = Object.fromEntries(photos.results.map((p) => [p.id, p.points]));
   const diff = Object.fromEntries(photos.results.map((p) => [p.id, p.difficulty]));
@@ -278,6 +291,7 @@ async function gameState(env, game) {
       home: game.home_lat != null ? { lat: game.home_lat, lng: game.home_lng, label: game.home_label || 'Home base' } : null,
       // The host's latest message to every phone and the TV.
       announce: game.announce_at ? { text: game.announce_text, at: game.announce_at } : null,
+      random_teams: !!game.random_teams, teams_at: game.teams_at || null, teams_ready: !!game.teams_ready,
     },
     teams: scored,
     photos: photos.results.map((p) => ({
@@ -295,6 +309,11 @@ async function gameState(env, game) {
 // teams' finds only as anonymous "Team Red found something" events.
 function playerView(s, me, mates) {
   const revealed = s.game.revealed;
+  if (s.game.random_teams && !s.game.teams_ready) {
+    // Teams are being picked at random: nobody sees a team yet, just who has joined.
+    const teams = s.teams.map((t) => ({ id: t.id, name: t.name, color: t.color, members: [], players: 0, roster: [], submitted: 0 }));
+    return { game: s.game, teams, photos: s.photos, finds: [], mates: [], events: [], everyone: s.players.map((p) => p.name) };
+  }
   const teams = s.teams.map((t) => {
     const base = { id: t.id, name: t.name, color: t.color, members: t.members, players: t.players, roster: t.roster, submitted: revealed ? t.submitted : t.sent };
     return revealed ? { ...base, score: t.score, found: t.found, by_diff: t.by_diff } : base;
@@ -345,9 +364,10 @@ async function player(request, env, url) {
     const game = await currentGame(env);
     if (!game) return json({ error: 'No game yet.' }, 404);
     const rows = await env.DB.prepare(
-      'SELECT p.id, p.name, t.name AS team, t.color FROM players p JOIN teams t ON t.id = p.team_id WHERE p.game_id = ? AND p.name_key = ? AND p.kicked_at IS NULL'
+      'SELECT p.id, p.name, t.name AS team, t.color FROM players p LEFT JOIN teams t ON t.id = p.team_id WHERE p.game_id = ? AND p.name_key = ? AND p.kicked_at IS NULL'
     ).bind(game.id, nameKey(name)).all();
-    return json({ matches: rows.results });
+    const hidden = teamsHidden(game);
+    return json({ matches: rows.results.map((m) => hidden || !m.team ? { ...m, team: null, color: '#555' } : m) });
   }
 
   // Switch teams in the lobby. Once the game starts, teams are locked (the host can still move people).
@@ -357,6 +377,7 @@ async function player(request, env, url) {
     const game = await currentGame(env);
     if (!game || game.id !== me.game_id) return json({ error: 'not_joined' }, 401);
     if (effectiveStatus(game) !== 'setup') return json({ error: 'The game has started, so teams are locked.' }, 400);
+    if (game.random_teams) return json({ error: 'The host is picking the teams.' }, 400);
     const { team_id } = await request.json().catch(() => ({}));
     const team = await env.DB.prepare('SELECT id FROM teams WHERE id = ? AND game_id = ?').bind(team_id, game.id).first();
     if (!team) return json({ error: 'Please pick a team.' }, 400);
@@ -373,18 +394,25 @@ async function player(request, env, url) {
       // Rejoin as an existing player (new phone, cleared browser).
       const p = await env.DB.prepare('SELECT * FROM players WHERE id = ? AND game_id = ? AND kicked_at IS NULL').bind(player_id, game.id).first();
       if (!p) return json({ error: 'Could not find that player.' }, 404);
-      return json({ token: p.token, player: { id: p.id, name: p.name, team_id: p.team_id } });
+      return json({ token: p.token, player: { id: p.id, name: p.name, team_id: teamsHidden(game) ? null : p.team_id } });
     }
     const clean = String(name || '').trim().slice(0, 30);
     if (!clean) return json({ error: 'Please type your name.' }, 400);
-    const team = await env.DB.prepare('SELECT id FROM teams WHERE id = ? AND game_id = ?').bind(team_id, game.id).first();
-    if (!team) return json({ error: 'Please pick a team.' }, 400);
-    const p = { id: id(), token: crypto.randomUUID(), name: clean, team_id };
+    let tid;
+    if (game.random_teams) {
+      // No picking: wait for the shuffle, or (if teams are already picked) join the smallest team.
+      tid = game.teams_at ? await smallestTeam(env, game.id) : '';
+    } else {
+      const team = await env.DB.prepare('SELECT id FROM teams WHERE id = ? AND game_id = ?').bind(team_id, game.id).first();
+      if (!team) return json({ error: 'Please pick a team.' }, 400);
+      tid = team.id;
+    }
+    const p = { id: id(), token: crypto.randomUUID(), name: clean };
     await env.DB.prepare(
       'INSERT INTO players (id, game_id, team_id, name, name_key, token, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    ).bind(p.id, game.id, team_id, clean, nameKey(clean), p.token, now()).run();
+    ).bind(p.id, game.id, tid, clean, nameKey(clean), p.token, now()).run();
     await bump(env, game.id);
-    return json({ token: p.token, player: { id: p.id, name: p.name, team_id } });
+    return json({ token: p.token, player: { id: p.id, name: p.name, team_id: teamsHidden(game) ? null : tid } });
   }
 
   // The one combined poll: send my location, get the game back (or "nothing new").
@@ -413,14 +441,15 @@ async function player(request, env, url) {
       } else stmts.push(env.DB.prepare('UPDATE players SET last_seen_at = ?, loc_state = COALESCE(?, loc_state) WHERE id = ?').bind(now(), locState, me.id));
     }
     // Teammates' latest spots, read fresh every time (they move without changing the game version).
+    const hidden = teamsHidden(game);
     stmts.push(env.DB.prepare('SELECT id, name, last_lat AS lat, last_lng AS lng, last_seen_at AS seen_at FROM players WHERE game_id = ? AND team_id = ? AND id != ? AND last_lat IS NOT NULL AND kicked_at IS NULL')
-      .bind(game.id, me.team_id, me.id));
+      .bind(game.id, hidden || !me.team_id ? '-' : me.team_id, me.id));
     const res = await env.DB.batch(stmts);
     const mates = res[res.length - 1].results;
     const v = tag(game);
     if (body.v === v) return json({ same: true, v, mates, now: now() });
     const s = await gameState(env, game);
-    return json({ ...playerView(s, me, mates), v, me: { id: me.id, name: me.name, team_id: me.team_id }, now: now() });
+    return json({ ...playerView(s, me, mates), v, me: { id: me.id, name: me.name, team_id: hidden || !me.team_id ? null : me.team_id }, now: now() });
   }
 
   if (path === '/api/checkin' && method === 'POST') {
@@ -444,6 +473,7 @@ async function player(request, env, url) {
     const lateOk = game.ends_at && takenAt <= game.ends_at && takenAt >= (game.started_at || 0) && now() - game.ends_at < 30 * 60000;
     if (status === 'ended' && !lateOk) return json({ result: 'ended' });
 
+    if (!me.team_id) return json({ error: "You're not on a team yet. Ask the host." }, 400);
     const photo = await env.DB.prepare('SELECT * FROM photos WHERE id = ? AND game_id = ?').bind(photoId, game.id).first();
     if (!photo) return json({ error: 'That photo is no longer in the game.' }, 404);
     if (photo.lat == null) return json({ error: 'This photo has no spot set yet. Tell the organizer.' }, 400);
@@ -547,7 +577,7 @@ async function admin(request, env, url, who) {
     if (prev) {
       stmts.push(env.DB.prepare(`INSERT INTO photos (id, game_id, title, difficulty, points, lat, lng, radius_m, hint, image_key, thumb_key, sort)
         SELECT lower(hex(randomblob(8))), ?, title, difficulty, points, lat, lng, radius_m, hint, image_key, thumb_key, sort FROM photos WHERE game_id = ?`).bind(g.id, prev.id));
-      stmts.push(env.DB.prepare('UPDATE games SET boundary_geojson = ?, home_lat = ?, home_lng = ?, home_label = ? WHERE id = ?').bind(prev.boundary_geojson || JSON.stringify(DEFAULT_BOUNDARY), prev.home_lat ?? null, prev.home_lng ?? null, prev.home_label ?? null, g.id));
+      stmts.push(env.DB.prepare('UPDATE games SET boundary_geojson = ?, home_lat = ?, home_lng = ?, home_label = ?, random_teams = ? WHERE id = ?').bind(prev.boundary_geojson || JSON.stringify(DEFAULT_BOUNDARY), prev.home_lat ?? null, prev.home_lng ?? null, prev.home_label ?? null, prev.random_teams ? 1 : 0, g.id));
     } else {
       stmts.push(env.DB.prepare('UPDATE games SET boundary_geojson = ? WHERE id = ?').bind(JSON.stringify(DEFAULT_BOUNDARY), g.id));
     }
@@ -562,7 +592,7 @@ async function admin(request, env, url, who) {
     const [teams, photos, players, finds] = await env.DB.batch([
       env.DB.prepare('SELECT * FROM teams WHERE game_id = ? ORDER BY rowid').bind(game.id),
       env.DB.prepare('SELECT * FROM photos WHERE game_id = ? ORDER BY sort, rowid').bind(game.id),
-      env.DB.prepare('SELECT id, team_id, name, last_lat, last_lng, last_accuracy, last_seen_at, loc_state, loc_at FROM players WHERE game_id = ? AND kicked_at IS NULL ORDER BY created_at').bind(game.id),
+      env.DB.prepare('SELECT id, team_id, name, last_lat, last_lng, last_accuracy, last_seen_at, loc_state, loc_at, adult FROM players WHERE game_id = ? AND kicked_at IS NULL ORDER BY created_at').bind(game.id),
       env.DB.prepare("SELECT * FROM finds WHERE game_id = ? AND status != 'replaced' ORDER BY created_at DESC").bind(game.id),
     ]);
     const s = await gameState(env, game);
@@ -587,7 +617,57 @@ async function admin(request, env, url, who) {
       const t = String(b.announce || '').trim().slice(0, 200);
       sets.push('announce_text = ?', 'announce_at = ?'); vals.push(t || null, t ? now() : null);
     }
+    if (b.random_teams !== undefined) {
+      if (effectiveStatus(game) !== 'setup') return json({ error: 'Change this before the game starts.' }, 400);
+      if (b.random_teams) {
+        // Everyone waits for the shuffle: clear the teams they picked.
+        await env.DB.prepare("UPDATE players SET team_id = '' WHERE game_id = ?").bind(game.id).run();
+        sets.push('random_teams = 1', 'teams_at = NULL', 'teams_ready = 0');
+      } else {
+        // Back to picking: anyone still without a team goes to the smallest one.
+        const loose = (await env.DB.prepare("SELECT id FROM players WHERE game_id = ? AND team_id = '' AND kicked_at IS NULL").bind(game.id).all()).results;
+        for (const p of loose) await env.DB.prepare('UPDATE players SET team_id = ? WHERE id = ?').bind(await smallestTeam(env, game.id), p.id).run();
+        sets.push('random_teams = 0', 'teams_at = NULL', 'teams_ready = 0');
+      }
+    }
+    if (b.action === 'shuffle') {
+      if (effectiveStatus(game) !== 'setup') return json({ error: 'Teams are locked once the game starts.' }, 400);
+      const count = Math.max(2, Math.min(8, Math.round(Number(b.count) || 2)));
+      // Make exactly `count` teams: keep the first ones (names and colors), add or remove the rest.
+      let teams = (await env.DB.prepare('SELECT id, name, color FROM teams WHERE game_id = ? ORDER BY rowid').bind(game.id).all()).results;
+      const stmts = [];
+      if (teams.length < count) {
+        const used = new Set(teams.map((t) => t.name));
+        const spare = [...DEFAULT_TEAMS, ...MORE_TEAMS].filter(([n]) => !used.has(n));
+        while (teams.length < count) {
+          const [n, c] = spare.shift() || [`Team ${teams.length + 1}`, '#6b7280'];
+          const t = { id: id(), name: n, color: c };
+          stmts.push(env.DB.prepare('INSERT INTO teams (id, game_id, name, color) VALUES (?, ?, ?, ?)').bind(t.id, game.id, n, c));
+          teams.push(t);
+        }
+      }
+      for (const t of teams.slice(count)) {
+        stmts.push(env.DB.prepare('DELETE FROM finds WHERE team_id = ?').bind(t.id), env.DB.prepare('DELETE FROM teams WHERE id = ?').bind(t.id));
+      }
+      teams = shuffle(teams.slice(0, count));
+      // Adults first, spread one per team in turn, so every team gets one if there are enough. Then kids to the smallest teams.
+      const players = (await env.DB.prepare('SELECT id, adult FROM players WHERE game_id = ? AND kicked_at IS NULL').bind(game.id).all()).results;
+      const size = Object.fromEntries(teams.map((t) => [t.id, 0]));
+      const put = (p, tid) => { size[tid]++; stmts.push(env.DB.prepare('UPDATE players SET team_id = ? WHERE id = ?').bind(tid, p.id)); };
+      shuffle(players.filter((p) => p.adult)).forEach((p, i) => put(p, teams[i % count].id));
+      shuffle(players.filter((p) => !p.adult)).forEach((p) => {
+        const min = Math.min(...teams.map((t) => size[t.id]));
+        put(p, shuffle(teams.filter((t) => size[t.id] === min))[0].id);
+      });
+      await env.DB.batch(stmts);
+      sets.push('teams_at = ?', 'teams_ready = 0'); vals.push(now());
+    }
+    if (b.action === 'show_teams') {
+      if (!game.teams_at) return json({ error: 'Shuffle the teams first.' }, 400);
+      sets.push('teams_ready = 1');
+    }
     if (b.action === 'start') {
+      if (teamsHidden(game)) return json({ error: game.teams_at ? 'Reveal the teams first, so everyone knows their team.' : 'Shuffle and reveal the teams first.' }, 400);
       // Starting twice would reset the clock, so only start a game that isn't live.
       if (['live', 'starting'].includes(effectiveStatus(game))) return json({ error: 'The game is already live.' }, 400);
       // The hunt opens after the countdown; the timer (if any) runs from then.
@@ -613,7 +693,7 @@ async function admin(request, env, url, who) {
         env.DB.prepare('DELETE FROM pings WHERE game_id = ?').bind(game.id),
         env.DB.prepare('DELETE FROM players WHERE game_id = ?').bind(game.id),
       ]);
-      sets.push("status = 'setup'", 'started_at = NULL', 'ends_at = NULL', 'revealed_at = NULL', 'announce_text = NULL', 'announce_at = NULL');
+      sets.push("status = 'setup'", 'started_at = NULL', 'ends_at = NULL', 'revealed_at = NULL', 'announce_text = NULL', 'announce_at = NULL', 'teams_at = NULL', 'teams_ready = 0');
     }
     if (!sets.length) return json({ error: 'Nothing to change' }, 400);
     await env.DB.prepare(`UPDATE games SET ${sets.join(', ')} WHERE id = ?`).bind(...vals, game.id).run();
@@ -766,10 +846,9 @@ async function admin(request, env, url, who) {
   }
 
   if (parts[0] === 'players' && method === 'PATCH') {
-    const { team_id } = await request.json();
-    await env.DB.batch([
-      env.DB.prepare('UPDATE players SET team_id = ? WHERE id = ? AND game_id = ?').bind(team_id, parts[1], game.id),
-    ]);
+    const { team_id, adult } = await request.json();
+    if (team_id !== undefined) await env.DB.prepare('UPDATE players SET team_id = ? WHERE id = ? AND game_id = ?').bind(team_id, parts[1], game.id).run();
+    if (adult !== undefined) await env.DB.prepare('UPDATE players SET adult = ? WHERE id = ? AND game_id = ?').bind(adult ? 1 : 0, parts[1], game.id).run();
     await bump(env, game.id);
     return json({ ok: true });
   }

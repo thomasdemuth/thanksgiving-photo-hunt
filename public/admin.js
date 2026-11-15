@@ -699,6 +699,7 @@
           </div>
           <div class="stack">
             <div class="card"><h2>Where everyone is</h2><div id="liveMap"></div></div>
+            <div class="card" id="teamCard"></div>
             <div class="card"><h2>Players <span class="count" id="pCount">0</span></h2><div id="players"></div></div>
           </div>
         </div></div>`;
@@ -734,10 +735,11 @@
 
     const waiting = finds.filter((f) => f.status === 'pending').length;
     const tutOn = game.tutorial_at && A.d.now - game.tutorial_at < 125000; // the demo runs about two minutes
-    if (changed('controls', game.status + '|' + game.ends_at + '|' + game.revealed_at + '|' + waiting + '|' + tutOn)) {
+    if (changed('controls', game.status + '|' + game.ends_at + '|' + game.revealed_at + '|' + waiting + '|' + tutOn + '|' + game.random_teams + game.teams_ready)) {
       $('#controls').innerHTML = game.status === 'setup' ? `
         <h2>Ready to start?</h2>
         <p class="small muted" style="margin:0"><span id="joinedLine"></span> Scan the code to join.</p>
+        ${game.random_teams && !game.teams_ready ? '<p class="small" style="margin:0">🎲 Shuffle and reveal the teams (below) before you start.</p>' : ''}
         <div><label for="mins" class="small">Game length in minutes (optional)</label><input id="mins" type="number" min="5" placeholder="No timer"></div>
         <button class="btn-ok btn-big" id="startBtn">▶ Start the game</button>`
         : game.status === 'starting' ? `
@@ -801,6 +803,47 @@
       try { await api('/finds/' + b.dataset.judge, 'PATCH', { status: b.dataset.s }); } finally { await refresh(); render(); }
     });
 
+    // Random teams: settings, shuffle and reveal (before the start only).
+    const adults = players.filter((p) => p.adult).length;
+    A.teamCount ||= Math.max(2, teams.length);
+    const hiddenTeams = game.random_teams && !game.teams_ready;
+    if (changed('teamcard', JSON.stringify([game.status, game.random_teams, game.teams_at, game.teams_ready, adults, players.length, A.teamCount]))) {
+      const card = $('#teamCard');
+      card.classList.toggle('hidden', game.status !== 'setup');
+      const n = A.teamCount;
+      const warn = !adults ? 'No adults marked yet: tick "Adult" next to their names below.'
+        : adults < n ? `<b class="error">Only ${adults} adult${adults > 1 ? 's' : ''} for ${n} teams</b>, so ${n - adults} team${n - adults > 1 ? 's' : ''} won't have one. Mark more adults or use fewer teams.`
+        : `${adults} adults marked: every team gets at least one.`;
+      card.innerHTML = `<h2>🎲 Random teams</h2>
+        <label class="rt-toggle"><input type="checkbox" id="rtOn" ${game.random_teams ? 'checked' : ''}><span><b>Pick the teams at random</b><br><span class="small muted">Players join without choosing a team and can't switch. You shuffle, then reveal who's on which team.</span></span></label>
+        ${game.random_teams ? `
+        <div class="row" style="margin:.6em 0 .3em"><span class="small">Number of teams</span><button class="btn-small" id="tcMinus" ${n <= 2 ? 'disabled' : ''}>−</button><b style="min-width:1.4em;text-align:center">${n}</b><button class="btn-small" id="tcPlus" ${n >= 8 ? 'disabled' : ''}>+</button>
+          <span class="small muted">${players.length ? `about ${Math.floor(players.length / n)}${players.length % n ? `–${Math.ceil(players.length / n)}` : ''} per team` : ''}</span></div>
+        <p class="small" style="margin:0 0 .5em">${warn}</p>
+        <div class="row"><button class="btn-primary btn-small" id="shuffleBtn" ${players.length < 2 ? 'disabled' : ''}>🎲 ${game.teams_at ? 'Shuffle again' : 'Shuffle teams'}</button>
+          ${game.teams_at && !game.teams_ready ? '<button class="btn-ok btn-small" id="showTeamsBtn">🎉 Reveal the teams</button>' : ''}</div>
+        <p class="small muted" style="margin:.5em 0 0">${!game.teams_at ? 'Everyone waits in the lobby until you shuffle and reveal. Anyone who joins after the shuffle goes to the smallest team.'
+          : !game.teams_ready ? 'Only you can see the teams (under Players). Shuffle again, move people by hand, or reveal them.'
+          : '✓ Everyone can see their team on their phone and the TV. Shuffling again hides the teams until you reveal again.'}</p>` : ''}`;
+      $('#rtOn').onchange = async (e) => {
+        const on = e.target.checked; e.target.blur();
+        if (on && players.length && !confirm('Pick teams at random? The teams players chose are cleared, and they wait in the lobby until you shuffle and reveal.')) { e.target.checked = false; return; }
+        try { await api('/game', 'PATCH', { random_teams: on }); } finally { await refresh(); render(); }
+      };
+      if ($('#tcMinus')) $('#tcMinus').onclick = () => { A.teamCount = Math.max(2, n - 1); render(); };
+      if ($('#tcPlus')) $('#tcPlus').onclick = () => { A.teamCount = Math.min(8, n + 1); render(); };
+      if ($('#shuffleBtn')) $('#shuffleBtn').onclick = async (e) => {
+        if (n !== teams.length && !confirm(`Make ${n} teams? ${n < teams.length ? `${teams.slice(n).map((t) => t.name).join(', ')} will be removed.` : 'New teams are added with default names and colors (rename them on the Photos & teams tab).'}`)) return;
+        if (game.teams_ready && !confirm('Shuffle again? Everyone gets a new team, hidden until you reveal again.')) return;
+        e.target.disabled = true;
+        try { await api('/game', 'PATCH', { action: 'shuffle', count: n }); } finally { await refresh(); A.sig.players = null; render(); }
+      };
+      if ($('#showTeamsBtn')) $('#showTeamsBtn').onclick = async (e) => {
+        e.target.disabled = true;
+        try { await api('/game', 'PATCH', { action: 'show_teams' }); } finally { await refresh(); render(); }
+      };
+    }
+
     // Players + manual fixes
     $('#pCount').textContent = players.length;
     const offline = (p) => !p.last_seen_at || A.d.now - p.last_seen_at > 2 * 60000;
@@ -813,12 +856,15 @@
       : isOut(p) ? '<span class="loc-tag bad">🚧 outside the area</span>'
       : '<span class="loc-tag ok">📍 ok</span>';
     const locBad = players.filter((p) => !offline(p) && (p.loc_state === 'off' || !p.loc_at)).length;
-    if (!busy && changed('players', JSON.stringify(players.map((p) => [p.id, p.team_id, p.name, locTag(p)])) + teams.map((t) => t.id + t.name).join())) {
-      $('#players').innerHTML = players.length ? teams.map((t) => {
-        const ps = players.filter((p) => p.team_id === t.id);
-        return `<div style="margin-bottom:.8em"><div class="row small" style="font-weight:700;margin-bottom:.3em"><span class="swatch" style="background:${esc(t.color)}"></span>${esc(t.name)} <span class="muted" style="font-weight:400">${ps.length}</span></div>` + ps.map((p) => `
-          <div class="row" style="padding:.2em 0 .2em 1.4em"><span class="grow small">${esc(p.name)} ${locTag(p)}</span>
-          <select data-move="${p.id}" style="width:auto;min-height:32px;font-size:.8em;padding:.1em .4em">${teams.map((tt) => `<option value="${tt.id}" ${tt.id === t.id ? 'selected' : ''}>${esc(tt.name)}</option>`).join('')}</select>
+    if (!busy && changed('players', JSON.stringify(players.map((p) => [p.id, p.team_id, p.name, locTag(p), p.adult])) + teams.map((t) => t.id + t.name).join() + game.random_teams + game.status)) {
+      const groups = [...teams, ...(players.some((p) => !teams.some((t) => t.id === p.team_id)) ? [{ id: '', name: game.random_teams ? 'Waiting for the shuffle' : 'No team', color: '#bbb' }] : [])];
+      const adultBox = (p) => game.random_teams && game.status === 'setup' ? `<label class="adult-box ${p.adult ? 'on' : ''}"><input type="checkbox" data-adult="${p.id}" ${p.adult ? 'checked' : ''}>Adult</label>` : (p.adult ? '<span class="small muted">adult</span>' : '');
+      $('#players').innerHTML = players.length ? groups.map((t) => {
+        const ps = players.filter((p) => t.id ? p.team_id === t.id : !teams.some((x) => x.id === p.team_id));
+        if (!t.id && !ps.length) return '';
+        return `<div style="margin-bottom:.8em"><div class="row small" style="font-weight:700;margin-bottom:.3em"><span class="swatch" style="background:${esc(t.color)}"></span>${esc(t.name)} <span class="muted" style="font-weight:400">${ps.length}${game.random_teams && t.id ? ` · ${ps.filter((p) => p.adult).length} adult${ps.filter((p) => p.adult).length === 1 ? '' : 's'}` : ''}</span></div>` + ps.map((p) => `
+          <div class="row" style="padding:.2em 0 .2em 1.4em"><span class="grow small">${esc(p.name)} ${locTag(p)}</span>${adultBox(p)}
+          <select data-move="${p.id}" style="width:auto;min-height:32px;font-size:.8em;padding:.1em .4em">${t.id ? '' : '<option value="" selected>No team</option>'}${teams.map((tt) => `<option value="${tt.id}" ${tt.id === t.id ? 'selected' : ''}>${esc(tt.name)}</option>`).join('')}</select>
           <button class="btn-small kick-btn" data-kick="${p.id}" title="Remove ${esc(p.name)} from the game">Remove</button></div>`).join('') + '</div>';
       }).join('') + (locBad ? `<p class="note small" style="margin:.4em 0 0">📍 ${locBad} phone${locBad > 1 ? 's have' : ' has'} no location. Their screen shows a "Fix it" button with steps for their phone.</p>` : '')
         : '<p class="muted small" style="margin:0">Nobody yet. Show the QR code.</p>';
@@ -829,6 +875,7 @@
         b.disabled = true;
         try { await api('/players/' + b.dataset.kick, 'DELETE'); } finally { await refresh(); A.sig.players = null; render(); }
       });
+      document.querySelectorAll('[data-adult]').forEach((c) => c.onchange = async () => { c.disabled = true; c.blur(); try { await api('/players/' + c.dataset.adult, 'PATCH', { adult: c.checked }); } finally { await refresh(); render(); } });
       document.querySelectorAll('[data-move]').forEach((s) => s.onchange = async () => { await api('/players/' + s.dataset.move, 'PATCH', { team_id: s.value }); await refresh(); render(); });
     }
     // The hand-add panel is only rebuilt when teams or photos change, so it keeps what you picked.

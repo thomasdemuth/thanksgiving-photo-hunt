@@ -363,3 +363,5 @@ body.idle .tut-skip { opacity: 0; }
 .tv-ann-from { font-size: 1.3em; color: var(--muted); font-weight: 700; }
 .tv-ann-text { font-size: 3.6em; font-weight: 700; line-height: 1.1; overflow-wrap: anywhere; }
 @keyframes annIn { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: none; } }
+.tnames.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(13em, 1fr)); align-content: start; }
+.tcol.pre .thead .sub { font-size: 1.3em; opacity: .9; margin-top: .2em; }

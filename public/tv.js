@@ -241,6 +241,25 @@
     // Before the start: just the team names, with everyone who has joined listed big underneath.
     if (['setup', 'starting'].includes(d.game.status)) {
       T.knownNames ||= new Set();
+      // Random teams not revealed yet: everyone in one list, no teams.
+      if (d.game.random_teams && !d.game.teams_ready) {
+        const names = d.players.map((p) => p.name);
+        const html = `<div class="tcol pre">
+            <div class="thead" style="background:#5b4636"><div class="row1"><span class="nm">🎲 Who's playing</span></div><div class="sub">${names.length} here · teams will be picked at random</div></div>
+            <div class="tnames grid ${names.length > 18 ? 'many' : ''}">${names.length ? names.map((n) => `<div class="pname ${T.knownNames.has('all' + n) ? '' : 'new'}" style="--c:#e8590c">${esc(n)}</div>`).join('') : '<div class="tempty">Waiting for players…</div>'}</div>
+          </div>`;
+        if (changed('teams', html.replace(/ new"/g, '"'))) {
+          $('#teams').innerHTML = html;
+          const fresh = names.some((n) => !T.knownNames.has('all' + n));
+          names.forEach((n) => T.knownNames.add('all' + n));
+          if (fresh && T.namesPrimed) Sound.chime();
+          T.namesPrimed = true;
+        }
+        T.teamsHidden = true;
+        return;
+      }
+      const justShown = T.teamsHidden; T.teamsHidden = false;
+      if (justShown) { Sound.whoosh(); setTimeout(() => Sound.fanfare(), 300); T.namesPrimed = false; }
       const html = order.map((t) => `<div class="tcol pre">
           <div class="thead" style="background:${esc(t.color)}"><div class="row1"><span class="nm">${esc(t.name)}</span></div></div>
           <div class="tnames ${t.members.length > 7 ? 'many' : ''}">${t.members.length ? t.members.map((n) => `<div class="pname ${T.knownNames.has(t.id + n) ? '' : 'new'}" style="--c:${esc(t.color)}">${esc(n)}</div>`).join('')

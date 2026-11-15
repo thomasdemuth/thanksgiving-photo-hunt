@@ -2,7 +2,8 @@ CREATE TABLE IF NOT EXISTS games (
   id TEXT PRIMARY KEY, name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'setup',
   boundary_geojson TEXT, join_code TEXT, started_at INTEGER, ends_at INTEGER,
   revealed_at INTEGER, version INTEGER NOT NULL DEFAULT 0, tutorial_at INTEGER,
-  home_lat REAL, home_lng REAL, home_label TEXT, announce_text TEXT, announce_at INTEGER, created_at INTEGER NOT NULL
+  home_lat REAL, home_lng REAL, home_label TEXT, announce_text TEXT, announce_at INTEGER,
+  random_teams INTEGER NOT NULL DEFAULT 0, teams_at INTEGER, teams_ready INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS teams (
   id TEXT PRIMARY KEY, game_id TEXT NOT NULL, name TEXT NOT NULL, color TEXT NOT NULL
@@ -10,7 +11,7 @@ CREATE TABLE IF NOT EXISTS teams (
 CREATE TABLE IF NOT EXISTS players (
   id TEXT PRIMARY KEY, game_id TEXT NOT NULL, team_id TEXT NOT NULL, name TEXT NOT NULL,
   name_key TEXT NOT NULL, token TEXT NOT NULL UNIQUE, last_lat REAL, last_lng REAL,
-  last_accuracy REAL, last_seen_at INTEGER, kicked_at INTEGER, loc_state TEXT, loc_at INTEGER, created_at INTEGER NOT NULL
+  last_accuracy REAL, last_seen_at INTEGER, kicked_at INTEGER, loc_state TEXT, loc_at INTEGER, adult INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS photos (
   id TEXT PRIMARY KEY, game_id TEXT NOT NULL, title TEXT, difficulty INTEGER NOT NULL DEFAULT 1,

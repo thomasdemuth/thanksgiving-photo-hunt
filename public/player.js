@@ -291,7 +291,7 @@
       if (!name) return;
       try {
         const { matches } = await api('/api/lookup', { name });
-        if (matches.length) askIsThisYou(name, matches, info); else pickTeam(name, info);
+        if (matches.length) askIsThisYou(name, matches, info); else if (info.game.random_teams) finishJoin({ name }); else pickTeam(name, info);
       } catch (e) { $('#joinErr').textContent = e.message; }
     };
   }
@@ -300,11 +300,11 @@
     $('#app').innerHTML = `
       <div class="screen stack">
         ${hero('Welcome back?')}
-        ${matches.map((m) => `<button class="team-btn" style="background:${esc(m.color)}" data-id="${esc(m.id)}"><span>Yes, I'm ${esc(m.name)}</span><small>${esc(m.team)} team</small></button>`).join('')}
+        ${matches.map((m) => `<button class="team-btn" style="background:${esc(m.color)}" data-id="${esc(m.id)}"><span>Yes, I'm ${esc(m.name)}</span><small>${m.team ? `${esc(m.team)} team` : 'Already joined'}</small></button>`).join('')}
         <button class="btn-big" id="newMe">No, I'm someone new</button>
       </div>`;
     document.querySelectorAll('[data-id]').forEach((b) => b.onclick = () => finishJoin({ player_id: b.dataset.id }));
-    $('#newMe').onclick = () => pickTeam(name, info);
+    $('#newMe').onclick = () => info.game.random_teams ? finishJoin({ name }) : pickTeam(name, info);
   }
 
   function pickTeam(name, info) {
@@ -452,7 +452,7 @@
         if (wasOffline) renderTop();
       } else {
         S.data = d; S.v = d.v;
-        announce(d); hostMessage(d.game);
+        announce(d); hostMessage(d.game); teamReveal(d);
         renderAll();
       }
       flushQueue();
@@ -484,6 +484,26 @@
     }
     if (msgs.length > 3) { toast('#111', `<b>${msgs.length} new finds</b> while you were away`); return; }
     msgs.forEach(([c, m], i) => setTimeout(() => toast(c, m), i * 700));
+  }
+
+  // Random teams: the moment the host reveals them, show this player their team and teammates.
+  function teamReveal(d) {
+    const g = d.game, t = d.teams.find((x) => x.id === d.me.team_id);
+    if (!g.random_teams || !g.teams_ready || !t) { if (!g.teams_ready) $('#teamReveal')?.remove(); return; }
+    const key = 'team-' + g.id, val = `${g.teams_at}:${t.id}`;
+    if (store.get(key) === val) return;
+    store.set(key, val);
+    const mates = t.members.filter((n) => n !== d.me.name);
+    let o = $('#teamReveal');
+    if (!o) { o = document.createElement('div'); o.id = 'teamReveal'; document.body.appendChild(o); }
+    o.className = 'team-reveal'; o.style.background = t.color;
+    o.innerHTML = `<div class="tr-in"><p class="tr-small">The teams are in!</p><div class="tr-badge" style="color:${esc(t.color)}">${esc(t.name[0])}</div>
+      <h1>You're on the<br><span class="tr-team">${esc(t.name)} team!</span></h1>
+      ${mates.length ? `<p class="tr-small">You're with</p><div class="tr-mates">${mates.map((n) => `<span>${esc(n)}</span>`).join('')}</div>` : '<p class="tr-small">More teammates may join soon.</p>'}
+      <button class="btn-big" id="trOk">Let's go!</button></div>`;
+    $('#trOk').onclick = () => o.remove();
+    if (navigator.vibrate) navigator.vibrate([100, 60, 100, 60, 400]);
+    confetti();
   }
 
   // A message the host sent to everyone ("Dinner's ready, come back!"). Shown once per phone.
@@ -568,33 +588,38 @@
     }
     if (!el) { el = document.createElement('div'); el.id = 'screen'; document.body.appendChild(el); }
     document.body.classList.add('locked'); // the game underneath can't scroll or be tapped
-    const me = S.data.me, team = myTeam(), color = team?.color || '#333';
+    const me = S.data.me, team = myTeam(), color = team?.color || (g.random_teams ? '#5b4636' : '#333');
     let html = '', sig = '';
     if (ph === 'lobby') {
       store.set('howto-seen', true);
       const ls = locStatus();
-      sig = JSON.stringify(['lobby', me, S.data.teams.map((x) => [x.id, x.name, x.color, x.members]), S.switching, ls]);
-      html = `<div class="lob">
-        <div class="lob-top"><span>🦃 ${esc(g.name)}</span></div>
-        <div class="lob-hero">
-          <div class="lob-badge" style="color:${esc(color)}">${esc((team?.name || '?')[0])}</div>
-          <p class="lob-you">You're <b>${esc(me.name)}</b> on the <b>${esc(team?.name || '')}</b> team</p>
-          ${ls === 'ok' ? '<p class="lob-loc ok">📍 Location is on ✓</p>'
-            : ls === 'off' ? '<button class="lob-loc off" data-lochelp>📍 Location is off. Tap here to fix it</button>'
-            : '<button class="lob-loc" data-lochelp>📡 Finding your location… <u>Help</u></button>'}
-          <h1>Waiting for other players to join</h1>
-          <div class="lob-dots"><i></i><i></i><i></i></div>
-        </div>
-        <div class="lob-how"><h2>How to play</h2>${howToHtml()}</div>
-        <h2 class="lob-h">Teams</h2>
+      const waitTeams = g.random_teams && !team; // teams are being picked at random
+      sig = JSON.stringify(['lobby', me, S.data.teams.map((x) => [x.id, x.name, x.color, x.members]), S.data.everyone, g.random_teams, g.teams_ready, S.switching, ls]);
+      const teamsHtml = waitTeams ? `
+        <h2 class="lob-h">Who's here <span class="lob-count">${(S.data.everyone || []).length}</span></h2>
+        <div class="lob-team"><div class="lob-members">${(S.data.everyone || []).map((n) => `<span class="chip ${n === me.name ? 'me' : ''}">${esc(n)}${n === me.name ? ' (you)' : ''}</span>`).join('')}</div></div>`
+        : `<h2 class="lob-h">${g.random_teams ? 'Teams (picked at random)' : 'Teams'}</h2>
         <div class="lob-teams">${S.data.teams.map((x) => {
           const mine = x.id === me.team_id;
           return `<div class="lob-team ${mine ? 'mine' : ''}">
             <div class="lob-th"><span class="swatch" style="background:${esc(x.color)}"></span><b>${esc(x.name)}</b><span class="muted small">${x.members.length}</span>
-              <span class="grow"></span>${mine ? '<span class="lob-here">Your team</span>' : `<button class="btn-small" data-switch="${esc(x.id)}" ${S.switching ? 'disabled' : ''}>Switch to ${esc(x.name)}</button>`}</div>
+              <span class="grow"></span>${mine ? '<span class="lob-here">Your team</span>' : g.random_teams ? '' : `<button class="btn-small" data-switch="${esc(x.id)}" ${S.switching ? 'disabled' : ''}>Switch to ${esc(x.name)}</button>`}</div>
             <div class="lob-members">${x.members.length ? x.members.map((n) => `<span class="chip ${mine && n === me.name ? 'me' : ''}">${esc(n)}${mine && n === me.name ? ' (you)' : ''}</span>`).join('') : '<span class="muted small">No one yet</span>'}</div>
           </div>`;
-        }).join('')}</div>
+        }).join('')}</div>`;
+      html = `<div class="lob">
+        <div class="lob-top"><span>🦃 ${esc(g.name)}</span></div>
+        <div class="lob-hero">
+          <div class="lob-badge" style="color:${esc(color)}">${esc(waitTeams ? '?' : (team?.name || '?')[0])}</div>
+          <p class="lob-you">${waitTeams ? `You're <b>${esc(me.name)}</b>. The host is picking the teams at random.` : `You're <b>${esc(me.name)}</b> on the <b>${esc(team?.name || '')}</b> team`}</p>
+          ${ls === 'ok' ? '<p class="lob-loc ok">📍 Location is on ✓</p>'
+            : ls === 'off' ? '<button class="lob-loc off" data-lochelp>📍 Location is off. Tap here to fix it</button>'
+            : '<button class="lob-loc" data-lochelp>📡 Finding your location… <u>Help</u></button>'}
+          <h1>${waitTeams ? 'Waiting for the teams to be picked' : 'Waiting for other players to join'}</h1>
+          <div class="lob-dots"><i></i><i></i><i></i></div>
+        </div>
+        <div class="lob-how"><h2>How to play</h2>${howToHtml()}</div>
+        ${teamsHtml}
         <p class="lob-foot">The hunt starts when the host presses Start. Keep this screen open.</p>
       </div>`;
     } else if (ph === 'countdown' || ph === 'go') {
