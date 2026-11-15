@@ -684,7 +684,7 @@
     $('#tiles').innerHTML = scoreTiles();
 
     const waiting = finds.filter((f) => f.status === 'pending').length;
-    const tutOn = game.tutorial_at && A.d.now - game.tutorial_at < 70000; // the demo runs about a minute
+    const tutOn = game.tutorial_at && A.d.now - game.tutorial_at < 125000; // the demo runs about two minutes
     if (changed('controls', game.status + '|' + game.ends_at + '|' + game.revealed_at + '|' + waiting + '|' + tutOn)) {
       $('#controls').innerHTML = game.status === 'setup' ? `
         <h2>Ready to start?</h2>

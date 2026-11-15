@@ -27,7 +27,7 @@
 
   // Settings, remembered on this TV.
   const SETTINGS = {
-    noSpoilers: { label: 'No spoilers', help: 'Hide points, right/wrong and distances until you reveal the results.', def: false },
+    noSpoilers: { label: 'No spoilers', help: 'Hide points, right/wrong and distances until you reveal the results.', def: true },
     popups: { label: 'Pop up new photos', help: 'Show each new photo big in the middle of the screen.', def: true },
     trails: { label: 'Walking trails', help: 'Draw the path each player has walked.', def: true },
     names: { label: 'Names on the map', help: 'Label each player\'s dot with their name.', def: true },
@@ -512,10 +512,7 @@
     const names = [...new Set(teams.flatMap((t) => t.members))];
     const sample = (names.length >= 3 ? names : [...names, 'Grandma', 'Mike', 'Ava', 'Leo'].filter((n, i, a) => a.indexOf(n) === i)).slice(0, 4);
     const me = sample[0];
-    const pics = d.photos.slice(0, 6);
     const ptsFor = (lvl) => d.photos.find((p) => p.difficulty === lvl)?.points ?? lvl;
-    const thumb = (i) => pics[i] ? `<img src="${esc(pics[i].thumb)}" alt="">` : `<div class="tp-fake" style="background:hsl(${i * 50 + 20} 45% 55%)"></div>`;
-    const big = pics[1] ? `<img class="tp-big" src="${esc(pics[1].image)}" alt="">` : '<div class="tp-big tp-fake" style="background:hsl(70 45% 55%)"></div>';
     const qr = (() => { const q = qrcode(0, 'M'); q.addData(location.origin + '/'); q.make(); return q.createSvgTag({ cellSize: 6, margin: 2, scalable: true }); })();
     const diffTag = (lvl) => `<span class="tp-diff d${lvl}">${'EMH'[lvl - 1]}</span>`;
 
@@ -541,59 +538,132 @@
       setTimeout(() => { f.remove(); target.classList.remove('pressed'); }, 900);
     };
     const type = (sel, text, ms) => { let i = 0; const iv = setInterval(() => { const e = scr()?.querySelector(sel); if (!alive() || !e || i >= text.length) { clearInterval(iv); return; } e.textContent = text.slice(0, ++i); }, ms); };
-    const show = (html) => { const s = scr(); if (s) s.innerHTML = html; };
-    const head = (sent) => `<div class="tp-head"><span class="tp-dot" style="background:${esc(t0.color)}">${esc(t0.name[0])}</span>${esc(t0.name)} team<span class="grow"></span>${sent}</div>`;
+    // Swap the phone's screen, keeping any finger tap that is still fading out.
+    const show = (html) => { const s = scr(); if (!s) return; const taps = [...s.querySelectorAll('.tut-tap')]; s.innerHTML = html; taps.forEach((t) => s.appendChild(t)); };
+    const total = d.photos.length || 60;
+    const DN = { 1: 'Easy', 2: 'Medium', 3: 'Hard' };
+    const ptsTxt = (l) => `${ptsFor(l)} point${ptsFor(l) === 1 ? '' : 's'}`;
+    const byDiff = (l) => d.photos.filter((p) => p.difficulty === l);
+    const first = d.photos.slice(0, 4);
+    const TICON = {
+      photos: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>',
+      map: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2z"/><path d="M9 4v14M15 6v14"/></svg>',
+      scores: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M8 21h8M12 17v4M7 4h10v4a5 5 0 0 1-10 0V4z"/><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3"/></svg>',
+    };
+    // Pieces of the real phone screens.
+    const tabs = (on) => `<div class="tp-tabs">${[['photos', 'Photos'], ['map', 'Map'], ['scores', 'Scores']].map(([k, l]) => `<span class="${k === on ? 'on' : ''}" id="tpTab-${k}">${TICON[k]}${l}</span>`).join('')}</div>`;
+    const head = (sent) => `<div class="tp-head"><div class="tp-row"><span class="tp-dot" style="background:${esc(t0.color)}">${esc(t0.name[0])}</span>${esc(t0.name)} team<span class="grow"></span><span class="tp-hb" id="tpHelp">?</span><span class="tp-hb" id="tpAa">Aa</span></div>
+      <div class="tp-score"><b>${sent}</b>&nbsp;of ${total} sent<span class="grow"></span>🤫 points at the end</div></div>`;
+    const seg = (on, sent) => `<div class="tp-seg"><span class="${on === 'todo' ? 'on' : ''}" id="tpTodo">To find · ${total - sent}</span><span class="${on === 'sent' ? 'on' : ''}" id="tpSentTab">Sent · ${sent}</span></div>`;
+    const chips = (on) => `<div class="tp-chips2">${['All', 'Easy', 'Medium', 'Hard'].map((c, i) => `<span class="${i === on ? 'on' : ''}" id="tpChip${i}">${i ? `<i class="tp-diff d${i}">${'EMH'[i - 1]}</i>` : ''}${c}</span>`).join('')}</div>`;
+    const img = (p, i, cls = '') => p ? `<img class="${cls}" src="${esc(p.thumb)}" alt="">` : `<div class="tp-fake ${cls}" style="background:hsl(${i * 50 + 20} 45% 55%)"></div>`;
+    const tile = (p, i) => `<div class="tp-tile" id="tpTile${i}">${img(p, i)}<span class="tp-n">#${p ? d.photos.indexOf(p) + 1 : i + 1}</span>${diffTag(p?.difficulty || (i % 3) + 1)}<span class="tp-pts">${ptsFor(p?.difficulty || (i % 3) + 1)} pt${ptsFor(p?.difficulty || (i % 3) + 1) === 1 ? '' : 's'}</span></div>`;
+    const grid = (list) => `<div class="tp-grid">${(list.length ? list : [null, null]).slice(0, 4).map(tile).join('')}</div>`;
+    const photosTab = (chip, list, sent = 0) => `${head(sent)}<div class="tp-body">${seg('todo', sent)}${chips(chip)}${grid(list)}</div>${tabs('photos')}`;
+    const p2 = d.photos[1];
+    const bigImg = (cls = '') => p2 ? `<img class="tp-big ${cls}" src="${esc(p2.image)}" alt="">` : `<div class="tp-big tp-fake ${cls}" style="background:hsl(70 45% 55%)"></div>`;
+    const detail = (extra = '') => `${head(0)}<div class="tp-body tp-pad2"><div class="tp-back">← Back to photos</div><div class="tp-zoomwrap">${bigImg('zoomable')}</div>
+      <div class="tp-h">#2 <span class="tp-muted">· ${DN[p2?.difficulty || 2]} · ${ptsTxt(p2?.difficulty || 2)}</span></div>
+      ${p2?.hint ? `<div class="tp-hint"><b>Hint:</b> ${esc(p2.hint)}</div>` : ''}${extra}<div class="tp-btn orange" id="tpFound">📸 I found it! Take the picture</div></div>${tabs('photos')}`;
+    // "Your team's picture": the same spot, framed a little differently.
+    const proof = (cls = '') => p2 ? `<img class="tp-proofimg ${cls}" src="${esc(p2.image)}" alt="">` : `<div class="tp-fake tp-proofimg ${cls}" style="background:hsl(80 40% 50%)"></div>`;
+    const walk = () => {
+      const path = scr()?.querySelector('#tpPath'); if (!path) return;
+      const len = path.getTotalLength(); path.style.strokeDasharray = len; path.style.strokeDashoffset = len;
+      const start = performance.now(), D = 6000;
+      (function step(now) {
+        if (!alive() || !path.isConnected) return;
+        const k = Math.min(1, (now - start) / D), ease = k < .5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+        path.style.strokeDashoffset = len * (1 - ease);
+        const p = path.getPointAtLength(len * ease), q = path.getPointAtLength(Math.max(0, len * ease - 22));
+        const s = scr(), meDot = s.querySelector('#tpMe'), mate = s.querySelector('#tpMate'), mn = s.querySelector('#tpMateName');
+        meDot.setAttribute('cx', p.x); meDot.setAttribute('cy', p.y); mate.setAttribute('cx', q.x - 9); mate.setAttribute('cy', q.y + 4);
+        mn.setAttribute('x', q.x - 9); mn.setAttribute('y', q.y - 7);
+        if (k < 1) setTimeout(() => step(performance.now()), 33); else Sound.chime();
+      })(start);
+    };
+    const mateName = sample[1] || 'Mike';
+    const mapTab = `${head(1)}<div class="tp-body tp-map"><svg viewBox="0 0 200 300" preserveAspectRatio="xMidYMid slice">
+        <rect width="200" height="300" fill="#ecebe4"/><rect x="112" y="14" width="70" height="62" rx="4" fill="#cfe3c4"/>
+        ${[40, 100, 160].map((x) => `<line x1="${x}" y1="0" x2="${x}" y2="300" stroke="#fff" stroke-width="9"/>`).join('')}${[50, 125, 200, 275].map((y) => `<line x1="0" y1="${y}" x2="200" y2="${y}" stroke="#fff" stroke-width="9"/>`).join('')}
+        <line x1="0" y1="300" x2="200" y2="0" stroke="#fff" stroke-width="7"/>
+        <path id="tpPath" d="M40 290 L40 200 L100 200 L100 125 L160 125 L160 92" fill="none" stroke="#1a73e8" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" opacity=".55"/>
+        <g transform="translate(40 125)"><circle r="9" fill="#00933c" stroke="#fff" stroke-width="2.5"/><text y="3.5" text-anchor="middle" font-size="10" font-weight="700" fill="#fff">✓</text></g>
+        <g transform="translate(160 80)"><path d="M0 12 C-9 0 -9 -12 0 -12 C9 -12 9 0 0 12Z" fill="#e8590c"/><text y="-2" text-anchor="middle" font-size="9" font-weight="700" fill="#fff">2</text></g>
+        <circle id="tpMate" cx="31" cy="294" r="6" fill="${esc(t0.color)}" stroke="#fff" stroke-width="2.5"/><circle id="tpMe" cx="40" cy="290" r="7.5" fill="#1a73e8" stroke="#fff" stroke-width="3"/>
+        <text id="tpMateName" x="31" y="283" font-size="9" font-weight="700" fill="#333" text-anchor="middle">${esc(mateName)}</text>
+      </svg>
+      <div class="tp-key"><div><i style="background:#1a73e8"></i>You + your trail</div><div><i style="background:${esc(t0.color)}"></i>Teammates</div><div><i style="background:#00933c"></i>Sent</div></div>
+      <div class="tp-mapbtns"><span>Whole area</span><span class="on" id="tpShowMe">Show me</span></div></div>${tabs('map')}`;
+    const sentTiles = `<div class="tp-grid">${[1, 3].map((i) => { const p = d.photos[i]; return `<div class="tp-tile" id="tpP${i}">${p ? `<img class="tp-proofimg" src="${esc(p.thumb)}" alt="">` : img(null, i, 'tp-proofimg')}${img(p, i, 'tp-inset')}<span class="tp-n">#${i + 1}</span><span class="tp-sent">✓ ${esc(i === 1 ? me : mateName)}</span></div>`; }).join('')}</div>`;
+    const SENT = [2, 3, 1];
+    const roster = (t, i) => {
+      const ns = t.members.length ? t.members.slice(0, 3) : sample.slice(i, i + 2), c = ns.map(() => 0);
+      for (let k = 0; k < SENT[i]; k++) c[k % ns.length]++; // the players' counts add up to the team's
+      return ns.map((n, j) => `<span>${esc(n)} <b>${c[j]}</b></span>`).join('');
+    };
 
     const scenes = [
       { title: 'Scan the code with your phone', sub: 'Open your camera, point it at the code, and tap the link. Then type your first name and pick your team.', dur: 9000,
         side: `<div class="tut-qr">${qr}<p>${esc(location.host)}</p></div>`,
         screen: `<div class="tp-pad"><div class="tp-turkey">🦃</div><div class="tp-h">${esc(d.game.name)}</div><div class="tp-label">Your first name</div><div class="tp-input"><span id="tpName"></span><i class="tp-caret"></i></div><div class="tp-btn" id="tpNext">Next</div></div>`,
-        steps: [[700, () => type('#tpName', me, 160)], [2600, () => tap('#tpNext')], [3300, () => show(`<div class="tp-pad"><div class="tp-h">Hi ${esc(me)}!</div><p class="tp-muted">Pick your team.</p>${teams.slice(0, 4).map((t, i) => `<div class="tp-team" id="tpTeam${i}" style="background:${esc(t.color)}">${esc(t.name)}</div>`).join('')}</div>`)], [5200, () => tap('#tpTeam0')],
-          [6200, () => show(`<div class="tp-pad tp-center"><div class="tp-turkey">📍</div><div class="tp-h">One more step</div><p class="tp-muted">Your phone asks to use your location. Tap <b>Allow</b>.</p><div class="tp-allow"><b>Allow location?</b><div><span>Don't Allow</span><span id="tpAllow">Allow</span></div></div></div>`)], [7800, () => tap('#tpAllow')]] },
+        steps: [[700, () => type('#tpName', me, 160)], [2600, () => tap('#tpNext')], [3000, () => show(`<div class="tp-pad"><div class="tp-h">Hi ${esc(me)}!</div><p class="tp-muted">Pick your team.</p>${teams.slice(0, 4).map((t, i) => `<div class="tp-team" id="tpTeam${i}" style="background:${esc(t.color)}">${esc(t.name)}</div>`).join('')}</div>`)], [5000, () => tap('#tpTeam0')],
+          [5500, () => show(`<div class="tp-pad tp-center"><div class="tp-turkey">📍</div><div class="tp-h">One more step</div><p class="tp-muted">Your phone asks to use your location. Tap <b>Allow</b>.</p><div class="tp-allow"><b>Allow location?</b><div><span>Don't Allow</span><span id="tpAllow">Allow</span></div></div></div>`)], [7500, () => tap('#tpAllow')]] },
+
       { title: 'Wait in the lobby', sub: 'Your screen turns your team\'s color. You can switch teams until the host presses Start. Then everyone counts down together.', dur: 9000,
         screen: `<div class="tp-lobby" style="background:${esc(t0.color)}"><div class="tp-badge" style="color:${esc(t0.color)}">${esc(t0.name[0])}</div><p>You're <b>${esc(me)}</b> on the <b>${esc(t0.name)}</b> team</p><div class="tp-h">Waiting for other players to join</div><div class="tp-chips" id="tpChips"></div></div>`,
         steps: [...sample.map((n, i) => [600 + i * 900, () => { const c = scr()?.querySelector('#tpChips'); if (c) { c.insertAdjacentHTML('beforeend', `<span class="tp-chip">${esc(n)}</span>`); Sound.tap(); } }]),
           ...[3, 2, 1].map((n, i) => [5000 + i * 900, () => { show(`<div class="tp-lobby tp-center" style="background:${esc(t0.color)}"><p>Get ready!</p><div class="tp-cd">${n}</div></div>`); Sound.ding(n === 1 ? 3 : 1); }]),
           [7700, () => { show(`<div class="tp-lobby tp-center" style="background:${esc(t0.color)}"><div class="tp-cd go">GO!</div><p>Happy hunting 🦃</p></div>`); Sound.ding(3); }]] },
-      { title: 'Pick a photo to find', sub: `Each photo shows a spot in the neighborhood. Easy ones are worth ${ptsFor(1)} point${ptsFor(1) === 1 ? '' : 's'}, hard ones ${ptsFor(3)}.`, dur: 8000,
-        screen: `${head('0 sent')}<div class="tp-grid">${[0, 1, 2, 3, 4, 5].map((i) => `<div class="tp-tile" id="tpTile${i}">${thumb(i)}<span class="tp-n">#${i + 1}</span>${diffTag(pics[i]?.difficulty || (i % 3) + 1)}</div>`).join('')}</div>`,
-        side: `<div class="tut-pts">${[1, 2, 3].map((l) => `<div class="tut-pt d${l}"><span>${'EMH'[l - 1]}</span><b>${['Easy', 'Medium', 'Hard'][l - 1]}</b><em>${ptsFor(l)} pt${ptsFor(l) === 1 ? '' : 's'}</em></div>`).join('')}</div>`,
-        steps: [[2800, () => tap('#tpTile1')], [3600, () => show(`${head('0 sent')}<div class="tp-pad">${big}<div class="tp-h" style="margin-top:.4em">#2</div><p class="tp-muted">Pinch to zoom in on the details.</p><div class="tp-btn orange">📸 I found it! Take the picture</div></div>`)]] },
-      { title: 'Walk there with your team', sub: 'The map shows the path you\'ve walked and where your teammates are. Stay together!', dur: 8500,
-        screen: `${head('0 sent')}<div class="tp-map"><svg viewBox="0 0 200 330" preserveAspectRatio="xMidYMid slice">
-          <rect width="200" height="330" fill="#ecebe4"/><rect x="112" y="18" width="70" height="70" rx="4" fill="#cfe3c4"/>
-          ${[40, 100, 160].map((x) => `<line x1="${x}" y1="0" x2="${x}" y2="330" stroke="#fff" stroke-width="9"/>`).join('')}${[60, 140, 220, 300].map((y) => `<line x1="0" y1="${y}" x2="200" y2="${y}" stroke="#fff" stroke-width="9"/>`).join('')}
-          <line x1="0" y1="330" x2="200" y2="0" stroke="#fff" stroke-width="7"/>
-          <path id="tpPath" d="M40 315 L40 220 L100 220 L100 140 L160 140 L160 96" fill="none" stroke="${esc(t0.color)}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" opacity=".7"/>
-          <g transform="translate(160 84)"><path d="M0 12 C-9 0 -9 -12 0 -12 C9 -12 9 0 0 12Z" fill="#e8590c"/><text y="-2" text-anchor="middle" font-size="9" font-weight="700" fill="#fff">2</text></g>
-          <circle id="tpMate" r="6" fill="${esc(t0.color)}" stroke="#fff" stroke-width="2.5" opacity=".75"/><circle id="tpMe" r="7.5" fill="#1a73e8" stroke="#fff" stroke-width="3"/>
-          <text id="tpMateName" font-size="9" font-weight="700" fill="#333" text-anchor="middle">${esc(sample[1] || 'Mike')}</text>
-        </svg></div>`,
-        steps: [[200, () => {
-          const path = scr()?.querySelector('#tpPath'); if (!path) return;
-          const len = path.getTotalLength(); path.style.strokeDasharray = len; path.style.strokeDashoffset = len;
-          const t1s = performance.now(), D = 6500;
-          (function step(now) {
-            if (!alive() || !path.isConnected) return;
-            const k = Math.min(1, (now - t1s) / D), ease = k < .5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
-            path.style.strokeDashoffset = len * (1 - ease);
-            const p = path.getPointAtLength(len * ease), q = path.getPointAtLength(Math.max(0, len * ease - 22));
-            const meDot = scr().querySelector('#tpMe'), mate = scr().querySelector('#tpMate'), mn = scr().querySelector('#tpMateName');
-            meDot.setAttribute('cx', p.x); meDot.setAttribute('cy', p.y); mate.setAttribute('cx', q.x - 9); mate.setAttribute('cy', q.y + 4);
-            mn.setAttribute('x', q.x - 9); mn.setAttribute('y', q.y - 6);
-            if (k < 1) setTimeout(() => step(performance.now()), 33); else Sound.chime();
-          })(t1s);
-        }]] },
+
+      { title: 'The Photos tab', sub: 'Every photo to find is here. The buttons on top show just the Easy, Medium or Hard ones, so you can pick what to go after.', dur: 10000,
+        screen: photosTab(0, first),
+        side: `<div class="tut-callouts"><div><b>To find / Sent</b> switches between photos you still need and ones your team sent</div><div><b>E · M · H</b> shows one difficulty at a time</div></div>`,
+        steps: [[2000, () => tap('#tpChip1')], [2350, () => show(photosTab(1, byDiff(1)))], [4400, () => tap('#tpChip3')], [4750, () => show(photosTab(3, byDiff(3)))], [6800, () => tap('#tpChip0')], [7150, () => show(photosTab(0, first))]] },
+
+      { title: 'Easy, Medium or Hard', sub: `Easy photos are big, well-known spots. Medium ones take a closer look. Hard ones are small details you could walk right past, so they're worth the most.`, dur: 10000,
+        screen: `${head(0)}<div class="tp-body tp-diffs">${[1, 2, 3].map((l) => `<div class="tp-drow" style="animation-delay:${(l - 1) * 0.7}s">${img(byDiff(l)[0], l)}<div><b>${diffTag(l)} ${DN[l]}</b><span>${ptsTxt(l)}</span></div></div>`).join('')}</div>${tabs('photos')}`,
+        side: `<div class="tut-pts">${[1, 2, 3].map((l) => `<div class="tut-pt d${l}"><span>${'EMH'[l - 1]}</span><b>${DN[l]}</b><em>${ptsTxt(l)}</em></div>`).join('')}<p class="tut-note">Harder photos = more points.<br>Every team can find every photo.</p></div>`,
+        steps: [[700, () => Sound.ding(1)], [1400, () => Sound.ding(2)], [2100, () => Sound.ding(3)]] },
+
+      { title: 'Tap a photo to see it big', sub: 'Pinch with two fingers to zoom in on the details. When you think you\'re standing in that spot, tap "I found it!"', dur: 9000,
+        screen: photosTab(0, first),
+        steps: [[1300, () => tap('#tpTile1')], [1700, () => show(detail())], [3600, () => scr()?.querySelector('.zoomable')?.classList.add('zoomed')], [6400, () => scr()?.querySelector('.zoomable')?.classList.remove('zoomed')]] },
+
+      { title: 'The Map tab', sub: 'The blue line is the path you\'ve walked. Your teammates show up with their names, and ✓ pins mark photos your team already sent. "Show me" jumps to where you are.', dur: 10000,
+        screen: photosTab(0, first, 1),
+        steps: [[700, () => tap('#tpTab-map')], [1050, () => { show(mapTab); walk(); }], [8200, () => tap('#tpShowMe')]] },
+
       { title: 'Stand where the photo was taken', sub: 'Tap "I found it!" and take a picture. Your location is sent with it, so get right to the spot.', dur: 9000,
-        screen: `${head('0 sent')}<div class="tp-pad">${big}<div class="tp-h" style="margin-top:.4em">#2</div><div class="tp-btn orange" id="tpFound">📸 I found it! Take the picture</div></div>`,
-        steps: [[1500, () => tap('#tpFound')], [2300, () => show(`<div class="tp-cam">${big}<i class="c1"></i><i class="c2"></i><i class="c3"></i><i class="c4"></i><div class="tp-shutter" id="tpShutter"></div></div>`)],
-          [4000, () => { tap('#tpShutter'); Sound.shutter(); scr()?.insertAdjacentHTML('beforeend', '<div class="tp-flash"></div>'); }],
-          [4900, () => { show(`${head('1 sent')}<div class="tp-pad tp-center"><div class="tp-locating"></div><div class="tp-h">Getting your location…</div></div>`); }],
-          [6300, () => { show(`${head('1 sent')}<div class="tp-pad tp-center tp-done"><div class="tp-turkey">📸</div><div class="tp-h big">Sent!</div><p class="tp-muted">Your picture and location are in. You'll find out what counted at the end.</p></div>`); Sound.chime(); }]] },
-      { title: 'Results stay secret!', sub: 'Your phone only says "Sent." The TV shows when a team finds something. Not sure you got it right? Tap "Submit again." Only the newest one counts.', dur: 9500,
-        screen: `${head('2 sent')}<div class="tp-grid">${[1, 4].map((i) => `<div class="tp-tile">${thumb(i)}<span class="tp-n">#${i + 1}</span><span class="tp-sent">✓ ${esc(me)}</span></div>`).join('')}</div><div class="tp-toast" id="tpToast"><i style="background:${esc(t1.color)}"></i><span><b>${esc(t1.name)} team</b> found something!</span></div>`,
-        side: `<div class="tut-tvpop" id="tpTv"><div class="h" style="background:${esc(t1.color)}">📸 New photo from the ${esc(t1.name)} team</div><div class="b">${thumb(3)}${thumb(2)}</div><div class="v">Results at the end! 🤫</div></div>`,
-        steps: [[2200, () => { scr()?.querySelector('#tpToast')?.classList.add('on'); $('#tpTv')?.classList.add('on'); Sound.chime(); }]] },
+        screen: detail(),
+        steps: [[1500, () => tap('#tpFound')], [2000, () => show(`<div class="tp-cam">${bigImg()}<i class="c1"></i><i class="c2"></i><i class="c3"></i><i class="c4"></i><div class="tp-shutter" id="tpShutter"></div></div>`)],
+          [3800, () => { tap('#tpShutter'); Sound.shutter(); scr()?.insertAdjacentHTML('beforeend', '<div class="tp-flash"></div>'); }],
+          [4600, () => show(`${head(1)}<div class="tp-body tp-pad2 tp-center"><div class="tp-locating"></div><div class="tp-h">Getting your location…</div></div>${tabs('photos')}`)],
+          [6000, () => { show(`${head(1)}<div class="tp-body tp-pad2 tp-center tp-done"><div class="tp-turkey">📸</div><div class="tp-h big">Sent!</div><p class="tp-muted">Your picture and location are in. You'll find out what counted at the end.</p></div>${tabs('photos')}`); Sound.chime(); }]] },
+
+      { title: 'See what your team sent', sub: 'Tap "Sent" to see your team\'s pictures, with the photo you were hunting in the corner. Tap one to compare them side by side. Wrong spot? Tap "Submit again."', dur: 10000,
+        screen: photosTab(0, first, 2),
+        steps: [[1200, () => tap('#tpSentTab')], [1550, () => show(`${head(2)}<div class="tp-body">${seg('sent', 2)}${chips(0)}${sentTiles}</div>${tabs('photos')}`)], [3800, () => tap('#tpP1')],
+          [4150, () => show(`${head(2)}<div class="tp-body tp-pad2"><div class="tp-back">← Back to photos</div><div class="tp-compare"><figure>${bigImg()}<figcaption>The photo</figcaption></figure><figure><div class="tp-proofbox">${proof()}</div><figcaption>Your team's picture · ${esc(me)}</figcaption></figure></div>
+            <div class="tp-ok">✓ Sent by ${esc(me)}. You'll find out if it counted at the end.</div><div class="tp-btn ghost" id="tpAgain">Wrong spot? Submit again</div></div>${tabs('photos')}`)],
+          [7800, () => tap('#tpAgain')]] },
+
+      { title: 'Results stay secret!', sub: 'Nobody sees what counted until the end, not even your team. Your phone and the TV show when another team finds something.', dur: 8500,
+        screen: `${head(2)}<div class="tp-body">${seg('sent', 2)}${sentTiles}</div>${tabs('photos')}<div class="tp-toast" id="tpToast"><i style="background:${esc(t1.color)}"></i><span><b>${esc(t1.name)} team</b> found something!</span></div>`,
+        side: `<div class="tut-tvpop" id="tpTv"><div class="h" style="background:${esc(t1.color)}">📸 New photo from the ${esc(t1.name)} team</div><div class="b">${img(d.photos[3], 3)}${img(d.photos[2], 2)}</div><div class="v">Results at the end! 🤫</div></div>`,
+        steps: [[2000, () => { scr()?.querySelector('#tpToast')?.classList.add('on'); $('#tpTv')?.classList.add('on'); Sound.chime(); }]] },
+
+      { title: 'The Scores tab', sub: 'Points stay secret until the end. Until then, see how many photos each team, and each player, has sent.', dur: 9000,
+        screen: photosTab(0, first, 2),
+        steps: [[1000, () => tap('#tpTab-scores')], [1350, () => show(`${head(2)}<div class="tp-body tp-pad2"><div class="tp-note">🤫 <b>Points are secret until the end.</b> For now you can see how many photos everyone has sent.</div>
+          <div class="tp-card"><b>Photos sent</b>${teams.slice(0, 3).map((t, i) => `<div class="tp-srow"><span class="tp-dot" style="background:${esc(t.color)}">${esc(t.name[0])}</span><div class="grow"><b>${esc(t.name)}</b><div class="tp-roster">${roster(t, i)}</div></div><span class="tp-big-n">${SENT[i]}<small>sent</small></span></div>`).join('')}</div></div>${tabs('scores')}`)]] },
+
+      { title: 'Need help? Tap the ? button', sub: 'The ? at the top shows these steps any time. Aa makes the text bigger. If a red "Location is off" bar shows up, tap "Fix it" and follow the steps.', dur: 9500,
+        screen: photosTab(0, first, 2),
+        steps: [[1200, () => tap('#tpHelp')], [1550, () => scr()?.insertAdjacentHTML('beforeend', `<div class="tp-sheet"><div><div class="tp-h">How to play</div>${['🔎 Pick a photo', '🚶 Find the spot with your team', '📸 Stand there and take the picture', '🤫 Results stay secret', '🏁 Come back when time is up'].map((x) => `<p>${x}</p>`).join('')}<div class="tp-btn" id="tpGotIt">Got it!</div></div></div>`)],
+          [4200, () => tap('#tpGotIt')], [4550, () => scr()?.querySelector('.tp-sheet')?.remove()], [5300, () => tap('#tpAa')], [5650, () => scr()?.classList.add('bigtext')],
+          [7000, () => { scr()?.classList.remove('bigtext'); scr()?.querySelector('.tp-head')?.insertAdjacentHTML('beforeend', '<div class="tp-locbar"><span>📍 <b>Location is off.</b></span><span class="fix" id="tpFix">Fix it</span></div>'); }], [8300, () => tap('#tpFix')]] },
+
       { title: 'Come back when time is up', sub: 'Head back to home base. The winners are revealed right here on the TV, photo by photo!', dur: 9000,
         screen: `<div class="tp-over tp-center"><div class="tp-turkey">🏁</div><div class="tp-h big">Game over!</div><p>See the results on the main screen.</p></div>`,
         side: `<div class="tut-win"><div class="tut-trophy">🏆</div>${teams.slice(0, 4).map((t, i) => `<div class="tut-wteam" style="background:${esc(t.color)};animation-delay:${1 + i * .5}s">${esc(t.name)}</div>`).join('')}<p>And the winner is…</p></div>`,
@@ -601,7 +671,9 @@
     ];
 
     $('#tutDots').innerHTML = scenes.map(() => '<i></i>').join('');
-    for (let i = 0; i < scenes.length; i++) {
+    // tv#tut=6 starts at step 6 (handy for checking one step).
+    const from = Math.max(0, (+new URLSearchParams(location.hash.slice(1)).get('tut') || 1) - 1);
+    for (let i = from; i < scenes.length; i++) {
       if (!alive()) return;
       const sc = scenes[i];
       $('#tutStep').textContent = `Step ${i + 1} of ${scenes.length}`;
