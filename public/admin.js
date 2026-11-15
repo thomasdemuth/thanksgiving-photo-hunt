@@ -750,14 +750,23 @@
 
     // Players + manual fixes
     $('#pCount').textContent = players.length;
-    if (!busy && changed('players', JSON.stringify(players.map((p) => [p.id, p.team_id, p.name, ago(p.last_seen_at)])) + teams.map((t) => t.id + t.name).join())) {
+    const offline = (p) => !p.last_seen_at || A.d.now - p.last_seen_at > 2 * 60000;
+    // Location status per phone, so problems show up in the lobby before the start.
+    const locTag = (p) => offline(p) ? `<span class="muted">· app closed ${p.last_seen_at ? ago(p.last_seen_at) : ''}</span>`
+      : p.loc_state === 'off' ? '<span class="loc-tag bad">📍 location off</span>'
+      : !p.loc_at ? '<span class="loc-tag warn">📍 no location yet</span>'
+      : A.d.now - p.loc_at > 3 * 60000 ? `<span class="loc-tag warn">📍 ${ago(p.loc_at)}</span>`
+      : '<span class="loc-tag ok">📍 ok</span>';
+    const locBad = players.filter((p) => !offline(p) && (p.loc_state === 'off' || !p.loc_at)).length;
+    if (!busy && changed('players', JSON.stringify(players.map((p) => [p.id, p.team_id, p.name, locTag(p)])) + teams.map((t) => t.id + t.name).join())) {
       $('#players').innerHTML = players.length ? teams.map((t) => {
         const ps = players.filter((p) => p.team_id === t.id);
         return `<div style="margin-bottom:.8em"><div class="row small" style="font-weight:700;margin-bottom:.3em"><span class="swatch" style="background:${esc(t.color)}"></span>${esc(t.name)} <span class="muted" style="font-weight:400">${ps.length}</span></div>` + ps.map((p) => `
-          <div class="row" style="padding:.2em 0 .2em 1.4em"><span class="grow small">${esc(p.name)} <span class="muted">· ${ago(p.last_seen_at)}</span></span>
+          <div class="row" style="padding:.2em 0 .2em 1.4em"><span class="grow small">${esc(p.name)} ${locTag(p)}</span>
           <select data-move="${p.id}" style="width:auto;min-height:32px;font-size:.8em;padding:.1em .4em">${teams.map((tt) => `<option value="${tt.id}" ${tt.id === t.id ? 'selected' : ''}>${esc(tt.name)}</option>`).join('')}</select>
           <button class="btn-small kick-btn" data-kick="${p.id}" title="Remove ${esc(p.name)} from the game">Remove</button></div>`).join('') + '</div>';
-      }).join('') : '<p class="muted small" style="margin:0">Nobody yet. Show the QR code.</p>';
+      }).join('') + (locBad ? `<p class="note small" style="margin:.4em 0 0">📍 ${locBad} phone${locBad > 1 ? 's have' : ' has'} no location. Their screen shows a "Fix it" button with steps for their phone.</p>` : '')
+        : '<p class="muted small" style="margin:0">Nobody yet. Show the QR code.</p>';
       document.querySelectorAll('[data-kick]').forEach((b) => b.onclick = async () => {
         const pl = playerOf(b.dataset.kick), tm = teamOf(pl?.team_id);
         const sent = finds.filter((f) => f.player_id === b.dataset.kick).length;
@@ -819,9 +828,9 @@
     // Live map
     A.liveLayer.clearLayers();
     players.filter((p) => p.last_lat != null).forEach((p) => {
-      const t = teamOf(p.team_id), stale = A.d.now - p.last_seen_at > 5 * 60000;
+      const t = teamOf(p.team_id), stale = A.d.now - (p.loc_at || p.last_seen_at) > 5 * 60000;
       L.marker([p.last_lat, p.last_lng], { icon: L.divIcon({ className: '', html: `<div class="player-pin ${stale ? 'stale' : ''}" style="background:${esc(t.color)}"></div>`, iconSize: [18, 18] }) })
-        .bindTooltip(`<b>${esc(p.name)}</b> · ${esc(t.name)}<br>${ago(p.last_seen_at)}`, { direction: 'top', offset: [0, -8] }).addTo(A.liveLayer);
+        .bindTooltip(`<b>${esc(p.name)}</b> · ${esc(t.name)}<br>${ago(p.loc_at || p.last_seen_at)}`, { direction: 'top', offset: [0, -8] }).addTo(A.liveLayer);
     });
   }
 

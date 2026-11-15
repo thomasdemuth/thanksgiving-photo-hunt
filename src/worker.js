@@ -398,14 +398,15 @@ async function player(request, env, url) {
     if (!me || !game || game.id !== me.game_id) return json({ error: 'not_joined' }, 401);
     const body = await request.json().catch(() => ({}));
     const stmts = [];
-    if (!me.last_seen_at || now() - me.last_seen_at > PING_EVERY_MS) {
+    const locState = ['ok', 'off', 'searching'].includes(body.loc) ? body.loc : null;
+    if (!me.last_seen_at || now() - me.last_seen_at > PING_EVERY_MS || (locState && locState !== me.loc_state)) {
       const hasLoc = Number.isFinite(body.lat) && Number.isFinite(body.lng);
       if (hasLoc) {
-        stmts.push(env.DB.prepare('UPDATE players SET last_lat = ?, last_lng = ?, last_accuracy = ?, last_seen_at = ? WHERE id = ?')
-          .bind(body.lat, body.lng, Number.isFinite(body.acc) ? body.acc : null, now(), me.id));
+        stmts.push(env.DB.prepare('UPDATE players SET last_lat = ?, last_lng = ?, last_accuracy = ?, last_seen_at = ?, loc_at = ?, loc_state = COALESCE(?, loc_state) WHERE id = ?')
+          .bind(body.lat, body.lng, Number.isFinite(body.acc) ? body.acc : null, now(), now(), locState, me.id));
         stmts.push(env.DB.prepare('INSERT INTO pings (player_id, game_id, lat, lng, at) VALUES (?, ?, ?, ?, ?)')
           .bind(me.id, game.id, body.lat, body.lng, now()));
-      } else stmts.push(env.DB.prepare('UPDATE players SET last_seen_at = ? WHERE id = ?').bind(now(), me.id));
+      } else stmts.push(env.DB.prepare('UPDATE players SET last_seen_at = ?, loc_state = COALESCE(?, loc_state) WHERE id = ?').bind(now(), locState, me.id));
     }
     // Teammates' latest spots, read fresh every time (they move without changing the game version).
     stmts.push(env.DB.prepare('SELECT id, name, last_lat AS lat, last_lng AS lng, last_seen_at AS seen_at FROM players WHERE game_id = ? AND team_id = ? AND id != ? AND last_lat IS NOT NULL AND kicked_at IS NULL')
@@ -557,7 +558,7 @@ async function admin(request, env, url, who) {
     const [teams, photos, players, finds] = await env.DB.batch([
       env.DB.prepare('SELECT * FROM teams WHERE game_id = ? ORDER BY rowid').bind(game.id),
       env.DB.prepare('SELECT * FROM photos WHERE game_id = ? ORDER BY sort, rowid').bind(game.id),
-      env.DB.prepare('SELECT id, team_id, name, last_lat, last_lng, last_accuracy, last_seen_at FROM players WHERE game_id = ? AND kicked_at IS NULL ORDER BY created_at').bind(game.id),
+      env.DB.prepare('SELECT id, team_id, name, last_lat, last_lng, last_accuracy, last_seen_at, loc_state, loc_at FROM players WHERE game_id = ? AND kicked_at IS NULL ORDER BY created_at').bind(game.id),
       env.DB.prepare("SELECT * FROM finds WHERE game_id = ? AND status != 'replaced' ORDER BY created_at DESC").bind(game.id),
     ]);
     const s = await gameState(env, game);

@@ -87,15 +87,17 @@
         if (!best || fix.acc <= best.acc) best = fix;
         gotFix(fix);
         if (fix.acc <= goodEnough) done();
-      }, (err) => { if (err.code === 1) { S.locDenied = true; renderAll(true); } done(err); },
+      }, (err) => { if (err.code === 1) setLocDenied(true); done(err); },
       { enableHighAccuracy: true, maximumAge: 5000, timeout: timeoutMs });
       const timer = setTimeout(() => done(), timeoutMs);
     });
   }
 
+  const posFix = (p) => ({ lat: p.coords.latitude, lng: p.coords.longitude, acc: Math.round(p.coords.accuracy), at: Date.now() });
+
   function gotFix(fix) {
     const wasDenied = S.locDenied;
-    S.fix = fix; S.locDenied = false;
+    S.fix = fix; S.locDenied = false; S.lowAcc = false;
     const gid = S.data?.game?.id;
     // Walked trail, only while the game is on. Skip fuzzy fixes so the line doesn't zigzag.
     if (gid && S.data.game.status === 'live' && fix.acc <= 50) {
@@ -107,17 +109,47 @@
         if (S.view === 'map') drawTrail();
       }
     }
-    if (wasDenied) renderAll(true);
+    if (wasDenied) { renderAll(true); S.screenSig = ''; }
     if (S.view === 'map') updateMe();
   }
 
-  // While the map is open, follow the phone continuously so "You" and the trail move smoothly.
+  function setLocDenied(on) {
+    if (S.locDenied === on) return;
+    S.locDenied = on;
+    if (on) stopWatch();
+    S.screenSig = ''; renderAll(true);
+  }
+
+  // What to show: 'ok', 'off' (blocked), or 'searching' (allowed, but no fresh location yet).
+  function locStatus() {
+    if (!navigator.geolocation || S.locDenied) return 'off';
+    return S.fix && Date.now() - S.fix.at < 120000 ? 'ok' : 'searching';
+  }
+
+  // The browser's own answer, where it gives one: 'granted', 'denied' or 'prompt'. Also notices when the
+  // player turns location back on in Settings, so the warning goes away by itself.
+  async function watchPermission() {
+    try {
+      const st = await navigator.permissions.query({ name: 'geolocation' });
+      S.perm = st.state;
+      if (st.state === 'denied') setLocDenied(true);
+      st.onchange = () => {
+        S.perm = st.state;
+        if (st.state === 'denied') setLocDenied(true);
+        else { setLocDenied(false); startWatch(); locTick(); }
+      };
+    } catch { /* older phones: we find out from the location calls instead */ }
+  }
+
+  // Follow the phone the whole time the page is open (phones stop this when the screen locks, so it
+  // restarts when the page comes back). locTick below tops it up and restarts it if it goes quiet.
   function startWatch() {
-    if (S.watch != null || !navigator.geolocation) return;
+    if (S.watch != null || !navigator.geolocation || document.hidden || S.locDenied) return;
+    S.watchAt = Date.now();
     S.watch = navigator.geolocation.watchPosition(
-      (p) => gotFix({ lat: p.coords.latitude, lng: p.coords.longitude, acc: Math.round(p.coords.accuracy), at: Date.now() }),
-      (err) => { if (err.code === 1 && !S.locDenied) { S.locDenied = true; renderAll(true); } },
-      { enableHighAccuracy: true, maximumAge: 5000 });
+      (p) => gotFix(posFix(p)),
+      (err) => { if (err.code === 1) setLocDenied(true); }, // 2 and 3 (no GPS yet / too slow): keep waiting
+      { enableHighAccuracy: true, maximumAge: 10000, timeout: 30000 });
   }
   function stopWatch() {
     if (S.watch == null) return;
@@ -132,12 +164,65 @@
     return Math.sqrt(x * x + y * y) * 6371000;
   }
 
+  // Every 15 s: make sure we're following the phone, and ask directly if nothing has come in lately.
   function locTick() {
-    if (document.hidden || !navigator.geolocation || !S.token) return;
+    if (document.hidden || !navigator.geolocation || !S.token || S.locBusy) return;
+    if (S.locDenied && S.perm !== 'prompt' && S.perm !== 'granted') return; // blocked: wait for "Try again" or Settings
+    startWatch();
+    const age = S.fix ? Date.now() - S.fix.at : Infinity;
+    if (age < 25000) return;
+    // Quiet for over a minute and a half: the watch is probably stuck, so start it over.
+    if (age > 90000 && S.watch != null && Date.now() - S.watchAt > 90000) { stopWatch(); startWatch(); }
+    S.locBusy = true;
     navigator.geolocation.getCurrentPosition(
-      (p) => gotFix({ lat: p.coords.latitude, lng: p.coords.longitude, acc: Math.round(p.coords.accuracy), at: Date.now() }),
-      (err) => { if (err.code === 1 && !S.locDenied) { S.locDenied = true; renderAll(true); } },
-      { enableHighAccuracy: true, maximumAge: 15000, timeout: 20000 });
+      (p) => { S.locBusy = false; gotFix(posFix(p)); },
+      (err) => {
+        S.locBusy = false;
+        if (err.code === 1) setLocDenied(true);
+        else S.lowAcc = !S.lowAcc; // no GPS between tall buildings: try the rougher wifi/cell location next time
+      },
+      { enableHighAccuracy: !S.lowAcc, maximumAge: 20000, timeout: 14000 });
+  }
+
+  // ---------- location help (blocked, or opened inside another app) ----------
+  const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (!/Android/.test(navigator.userAgent) && navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const inAppBrowser = /FBAN|FBAV|FB_IAB|Instagram|Line\/|MicroMessenger|Snapchat|LinkedInApp|GSA\/|Twitter|; wv\)/i.test(navigator.userAgent);
+  function locSteps() {
+    if (inAppBrowser) return `<p><b>You opened this inside another app</b>, which can't share your location. Tap <b>⋯</b> or the share button and choose <b>Open in ${isIOS ? 'Safari' : 'Chrome'}</b>, or copy this address into ${isIOS ? 'Safari' : 'Chrome'}:</p>
+      <p class="loc-url"><b>${esc(location.host)}</b></p>`;
+    if (isIOS && /CriOS/.test(navigator.userAgent)) return `<ol class="loc-steps"><li>Open the <b>Settings</b> app → <b>Privacy &amp; Security</b> → <b>Location Services</b>. Make sure it's <b>on</b>.</li>
+      <li>In Settings, scroll down to <b>Chrome</b> → <b>Location</b> → <b>While Using the App</b>.</li><li>Come back here and tap <b>Try again</b>.</li></ol>`;
+    if (isIOS) return `<ol class="loc-steps"><li>Open the <b>Settings</b> app → <b>Privacy &amp; Security</b> → <b>Location Services</b>. Make sure it's <b>on</b>.</li>
+      <li>On that same screen, scroll down to <b>Safari Websites</b> and pick <b>While Using the App</b>.</li>
+      <li>Back in Safari, tap <b>aA</b> (or the ☰ icon) next to the web address → <b>Website Settings</b> → <b>Location</b> → <b>Allow</b>.</li>
+      <li>Come back here and tap <b>Try again</b>.</li></ol>`;
+    return `<ol class="loc-steps"><li>Swipe down from the top of the screen and make sure <b>Location</b> is <b>on</b>.</li>
+      <li>Tap the icon to the left of the web address (⚙ or 🔒) → <b>Permissions</b> → <b>Location</b> → <b>Allow</b>.</li>
+      <li>Come back here and tap <b>Try again</b>.</li></ol>`;
+  }
+  // Ask again from a button press (some phones only show the "Allow?" box after a tap).
+  async function retryLocation(btn, onOk) {
+    btn.disabled = true; btn.textContent = 'Checking…';
+    try {
+      await getFix(12000, 150);
+      setLocDenied(false); startWatch(); onOk();
+    } catch (e) {
+      btn.disabled = false; btn.textContent = 'Try again';
+      const msg = btn.parentElement.querySelector('.loc-msg');
+      if (msg) msg.textContent = e && e.code === 1 ? 'Still blocked. Follow the steps above, then try again.' : 'Location is allowed, but your phone couldn\'t find you yet. Step outside or wait a moment.';
+      if (e && e.code !== 1) { setLocDenied(false); startWatch(); }
+    }
+  }
+  function showLocHelp() {
+    const st = locStatus();
+    sheet(st === 'searching' && !inAppBrowser
+      ? `<div class="emoji">📡</div><h2>Looking for your location…</h2><p class="muted">Location is allowed, but your phone hasn't found you yet. This is normal indoors or between tall buildings. Step outside for a moment.</p>
+        <button class="btn-primary btn-big" id="locRetry">Try again</button><p class="loc-msg muted small"></p><button class="btn-big" data-close>Close</button>`
+      : `<div class="emoji">📍</div><h2>Turn on location</h2><p class="muted">The game needs your location to check your photos and show your teammates where you are.</p>
+        <div class="loc-help">${locSteps()}</div>
+        <button class="btn-primary btn-big" id="locRetry">Try again</button><p class="loc-msg muted small"></p><button class="btn-big" data-close>Not now</button>`);
+    $('#sheet').classList.add('tall');
+    $('#locRetry').onclick = (ev) => retryLocation(ev.currentTarget, () => { $('#sheet')?.remove(); toast('#00933c', '<b>📍 Location is on.</b> You\'re all set!'); });
   }
 
   // ---------- join ----------
@@ -217,7 +302,11 @@
     try {
       const r = await api('/api/join', body);
       S.token = r.token; store.set('token', r.token);
-      showLocationAsk();
+      let perm = null;
+      try { perm = (await navigator.permissions.query({ name: 'geolocation' })).state; } catch { /* not supported */ }
+      if (inAppBrowser || perm === 'denied' || !navigator.geolocation) showLocBlocked();
+      else if (perm === 'granted') startGame();
+      else showLocationAsk();
     } catch (e) {
       const el = $('#joinErr'); if (el) el.textContent = e.message; else alert(e.message);
       document.querySelectorAll('.team-btn, #newMe').forEach((b) => { b.disabled = false; });
@@ -236,8 +325,24 @@
       </div>`;
     $('#askLoc').onclick = () => {
       $('#askLoc').disabled = true; $('#askLoc').textContent = 'Waiting…';
-      getFix(10000, 100).catch(() => {}).finally(startGame);
+      getFix(15000, 150).then(startGame, (e) => {
+        if (e && (e.code === 1 || e.message === 'no_geo')) showLocBlocked(); else startGame(); // timeout: keep trying in the game
+      });
     };
+  }
+
+  // The phone said no without asking (location switched off, or blocked earlier), or the player tapped "Don't Allow".
+  function showLocBlocked() {
+    $('#app').innerHTML = `
+      <div class="screen stack">
+        ${hero('Location is blocked', 'Your phone didn\'t let the game see your location. Here\'s how to turn it on:')}
+        <div class="card loc-help">${locSteps()}</div>
+        <button class="btn-primary btn-big" id="locRetry">Try again</button>
+        <p class="loc-msg muted small center"></p>
+        <button class="btn-ghost" id="locSkip">Skip for now (you can't send photos without it)</button>
+      </div>`;
+    $('#locRetry').onclick = (ev) => retryLocation(ev.currentTarget, startGame);
+    $('#locSkip').onclick = startGame;
   }
 
   // ---------- main ----------
@@ -268,14 +373,15 @@
     $('#cam').onchange = onPhotoTaken;
     go('photos');
     poll();
+    S.locSince = Date.now();
+    watchPermission(); startWatch(); locTick();
     // Check every 4 s, or every 1.5 s in the lobby so everyone's countdown starts together.
     setInterval(() => { if (Date.now() - (S.lastPoll || 0) >= (phase() === 'lobby' ? 1500 : POLL_MS)) poll(); }, 500);
     setInterval(locTick, LOC_MS);
-    setInterval(() => { renderClock(); renderScreen(); }, 250);
+    setInterval(() => { renderClock(); renderScreen(); renderLocBar(); }, 250);
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) { stopWatch(); return; }
-      poll(); locTick();
-      if (S.view === 'map') startWatch();
+      poll(); startWatch(); locTick();
     });
     window.addEventListener('online', flushQueue);
     window.addEventListener('popstate', () => { if (S.detail) closeDetail(true); });
@@ -289,7 +395,7 @@
     $('#vMap').classList.toggle('hidden', view !== 'map');
     $('#vScores').classList.toggle('hidden', view !== 'scores');
     $('#vDetail').classList.add('hidden');
-    if (view === 'map') { openMap(); startWatch(); } else stopWatch();
+    if (view === 'map') openMap();
     renderAll(true);
     window.scrollTo(0, 0);
   }
@@ -301,7 +407,8 @@
     S.polling = true;
     S.lastPoll = Date.now();
     try {
-      const body = S.fix && Date.now() - S.fix.at < 60000 ? { lat: S.fix.lat, lng: S.fix.lng, acc: S.fix.acc } : {};
+      const body = S.fix && Date.now() - S.fix.at < 180000 ? { lat: S.fix.lat, lng: S.fix.lng, acc: S.fix.acc } : {};
+      body.loc = locStatus();
       if (S.data && S.v) body.v = S.v; // "I already have this version"
       const d = await api('/api/poll', body, { timeout: 12000 });
       S.offset = d.now - Date.now();
@@ -409,6 +516,9 @@
     if (ph === 'game') {
       if (el) { el.remove(); document.body.classList.remove('locked'); }
       S.screenSig = '';
+      // Joined after the start, so never saw the lobby: show the steps once.
+      if (S.lastPh !== 'go' && !store.get('howto-seen') && !$('#sheet')) showHowTo();
+      S.lastPh = ph;
       return;
     }
     if (!el) { el = document.createElement('div'); el.id = 'screen'; document.body.appendChild(el); }
@@ -416,15 +526,22 @@
     const me = S.data.me, team = myTeam(), color = team?.color || '#333';
     let html = '', sig = '';
     if (ph === 'lobby') {
-      sig = JSON.stringify(['lobby', me, S.data.teams.map((x) => [x.id, x.name, x.color, x.members]), S.switching]);
+      store.set('howto-seen', true);
+      const ls = locStatus();
+      sig = JSON.stringify(['lobby', me, S.data.teams.map((x) => [x.id, x.name, x.color, x.members]), S.switching, ls]);
       html = `<div class="lob">
         <div class="lob-top"><span>🦃 ${esc(g.name)}</span></div>
         <div class="lob-hero">
           <div class="lob-badge" style="color:${esc(color)}">${esc((team?.name || '?')[0])}</div>
           <p class="lob-you">You're <b>${esc(me.name)}</b> on the <b>${esc(team?.name || '')}</b> team</p>
+          ${ls === 'ok' ? '<p class="lob-loc ok">📍 Location is on ✓</p>'
+            : ls === 'off' ? '<button class="lob-loc off" data-lochelp>📍 Location is off. Tap here to fix it</button>'
+            : '<button class="lob-loc" data-lochelp>📡 Finding your location… <u>Help</u></button>'}
           <h1>Waiting for other players to join</h1>
           <div class="lob-dots"><i></i><i></i><i></i></div>
         </div>
+        <div class="lob-how"><h2>How to play</h2>${howToHtml()}</div>
+        <h2 class="lob-h">Teams</h2>
         <div class="lob-teams">${S.data.teams.map((x) => {
           const mine = x.id === me.team_id;
           return `<div class="lob-team ${mine ? 'mine' : ''}">
@@ -454,11 +571,34 @@
     el.className = 'screen-full ' + ph;
     el.style.background = ph === 'over' ? '#111' : color;
     el.innerHTML = html;
+    el.querySelectorAll('[data-lochelp]').forEach((b) => b.onclick = showLocHelp);
     el.querySelectorAll('[data-switch]').forEach((b) => b.onclick = async () => {
       S.switching = true; renderScreen();
       try { await api('/api/team', { team_id: b.dataset.switch }); } catch (e) { if (!e.handled) alert(e.message); }
       S.switching = false; S.screenSig = ''; poll(true);
     });
+  }
+
+  // ---------- how to play (lobby card + "?" button in the game) ----------
+  const HOW_STEPS = [
+    ['🔎', 'Pick a photo', 'Each photo shows a spot in the neighborhood. Harder ones are worth more points.'],
+    ['🚶', 'Find the spot with your team', 'The Map shows where you\'ve walked and where your teammates are.'],
+    ['📸', 'Stand where the photo was taken', 'Tap the photo, then <b>"I found it! Take the picture."</b> Your location is sent with it, so get right to the spot.'],
+    ['🤫', 'Results stay secret', 'You\'ll only see "Sent." Not sure you got it right? Tap <b>"Submit again"</b>. Only the newest one counts.'],
+    ['🏁', 'Come back when time is up', 'The winners are revealed on the TV at home base.'],
+  ];
+  function howToHtml() {
+    return `<ol class="how">${HOW_STEPS.map(([i, t, d]) => `<li><span class="how-i">${i}</span><div><b>${t}</b><p>${d}</p></div></li>`).join('')}</ol>
+      <ul class="how-tips">
+        <li>Keep this page open. If your phone locks, just open it again. Nothing is lost.</li>
+        <li>No signal? Your photo is saved and sends by itself later.</li>
+        <li>Tap <b>Aa</b> at the top for bigger text.</li>
+      </ul>`;
+  }
+  function showHowTo() {
+    store.set('howto-seen', true);
+    sheet(`<h2 style="margin:0">How to play</h2>${howToHtml()}<button class="btn-primary btn-big" data-close>Got it, let's hunt!</button>`);
+    $('#sheet').classList.add('tall');
   }
 
   function rankText(n) { const s = ['th', 'st', 'nd', 'rd'], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); }
@@ -494,17 +634,36 @@
       <div class="top">
         <span class="team"><span class="bullet" style="background:${esc(t?.color)}">${esc((t?.name || '?')[0])}</span>${esc(t?.name)} team</span>
         <span class="${S.offline ? 'clock over' : 'clock ' + cc}" id="clock">${S.offline ? 'No signal' : ct}</span>
+        <button class="text-btn" id="helpBtn" aria-label="How to play">?</button>
         <button class="text-btn" id="bigBtn" aria-label="Bigger text">Aa</button>
       </div>
       <div class="score">${line}</div>
-      <div class="progress"><span style="width:${total ? (100 * sent) / total : 0}%"></span></div>`;
+      <div class="progress"><span style="width:${total ? (100 * sent) / total : 0}%"></span></div>
+      <div id="locBar"></div>`;
+    S.locBarSig = '';
+    renderLocBar();
+    $('#helpBtn').onclick = showHowTo;
     $('#bigBtn').onclick = () => { const on = document.body.classList.toggle('big'); store.set('big', on); };
+  }
+
+  // A strip under the header on every tab when location isn't working.
+  function renderLocBar() {
+    const el = $('#locBar'); if (!el) return;
+    const st = locStatus();
+    const show = st === 'off' || (st === 'searching' && Date.now() - S.locSince > 30000);
+    const sig = show ? st : '';
+    if (sig === S.locBarSig) return;
+    S.locBarSig = sig;
+    el.className = show ? 'loc-bar ' + st : '';
+    el.innerHTML = !show ? '' : st === 'off'
+      ? '<span>📍 <b>Location is off.</b> Teammates can\'t see you and photos can\'t be sent.</span><button>Fix it</button>'
+      : '<span>📡 <b>Looking for your location…</b></span><button>Help</button>';
+    if (show) el.querySelector('button').onclick = showLocHelp;
   }
 
   function notes() {
     const g = S.data.game;
     let html = '';
-    if (S.locDenied) html += `<div class="note">📍 <b>Location is off.</b> You need it to submit photos.<br><span class="small">iPhone: Settings → Privacy → Location Services → Safari Websites → While Using. Android: tap the icon left of the web address → Permissions → Location. Then reload.</span></div>`;
     if (g.status === 'setup') html += `<div class="note info">⏳ The game hasn't started yet. Look over the photos and plan your route!</div>`;
     if (g.status === 'ended' && !g.revealed) html += `<div class="note good">🏁 <b>Game over!</b> Head back to home base. The results will be revealed there.</div>`;
     if (g.status === 'ended' && g.revealed) html += `<div class="note good">🏆 <b>The results are in!</b> See Scores.</div>`;
@@ -649,6 +808,7 @@
       if (S.fix && Date.now() - S.fix.at < 90000) fix = S.fix;
       else fix = await getFix(10000, 50).catch(() => null);
     }
+    if (!fix && S.locDenied) { showLocHelp(); return; }
     if (!fix) {
       sheet(`<div class="emoji">📍</div><h2>We couldn't find your location</h2>
         <p class="muted">Make sure Location is on for this website, step out from under any awning, and try again.</p>
