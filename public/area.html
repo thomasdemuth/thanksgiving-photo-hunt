@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Game area · Photo Hunt</title>
+  <meta name="robots" content="noindex">
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/vendor/leaflet.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦃</text></svg>">
+  <style>
+    body { font-size: 17px; }
+    .area-page { max-width: 1100px; margin: 0 auto; padding: 16px; }
+    .area-head { display: flex; align-items: center; gap: .6em; flex-wrap: wrap; margin-bottom: .6em; }
+    .area-head h1 { margin: 0; flex: 1; min-width: 12em; }
+    .area-tools { display: flex; gap: .4em; flex-wrap: wrap; }
+    .area-tools button { min-height: 44px; font-size: .85em; }
+    .area-grid { display: grid; grid-template-columns: 1fr 260px; gap: 14px; }
+    #areaMap { height: 70vh; min-height: 420px; border: 2px solid var(--ink); border-radius: var(--radius); }
+    .area-side { display: flex; flex-direction: column; gap: .8em; }
+    .area-side .box { background: var(--white); border: 1px solid var(--line); border-radius: var(--radius); padding: .7em .8em; }
+    .area-side .qr svg { width: 100%; height: auto; display: block; }
+    .area-side ul { margin: 0; padding-left: 1.1em; }
+    .area-side li + li { margin-top: .3em; }
+    #notes { min-height: 4.5em; outline: none; white-space: pre-wrap; }
+    #notes:empty::before { content: attr(data-placeholder); color: var(--muted); }
+    .line-swatch { display: inline-block; width: 1.4em; height: 4px; background: var(--orange); vertical-align: middle; margin-right: .3em; }
+    .home-pin { width: 34px; height: 34px; border-radius: 50%; background: #fff; border: 3px solid #1f1a17; box-shadow: 0 2px 6px rgba(0,0,0,.35); font-size: 18px; line-height: 28px; text-align: center; }
+    .home-label { font-weight: 700; font-size: 13px; padding: 1px 6px; }
+    .area-tip { margin-top: .5em; }
+    @media (max-width: 760px) { .area-grid { grid-template-columns: 1fr; } #areaMap { height: 60vh; } }
+    @page { size: landscape; margin: 10mm; }
+    @media print {
+      body { background: #fff; font-size: 13px; }
+      .area-page { max-width: none; padding: 0; }
+      .no-print { display: none !important; }
+      .area-grid { grid-template-columns: 1fr 210px; }
+      #areaMap { height: 165mm; min-height: 0; }
+      .leaflet-control-zoom { display: none; }
+      #notes:empty { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div id="app" class="area-page"><p>Loading…</p></div>
+  <script src="/vendor/leaflet.js"></script>
+  <script src="/vendor/qrcode.js"></script>
+  <script src="/area.js"></script>
+</body>
+</html>

@@ -32,6 +32,7 @@
     trails: { label: 'Walking trails', help: 'Draw the path each player has walked.', def: true },
     names: { label: 'Names on the map', help: 'Label each player\'s dot with their name.', def: true },
     spots: { label: 'Photo spots on the map', help: 'Show every hunt spot, numbered, like the host sees them. Careful: players could peek!', def: false },
+    joinCode: { label: 'Join code in the corner', help: 'A small QR code on the map during the game, for anyone who arrives late.', def: true },
     sound: { label: 'Sound', help: 'A chime for new photos, and music for the final reveal.', def: true },
   };
   const opt = (k) => { const v = localStorage.getItem('tv-' + k); return v === null ? SETTINGS[k].def : v === '1'; };
@@ -80,7 +81,7 @@
           <button class="tv-gear" id="gear">⚙ Settings</button>
         </header>
         <div class="tv-main">
-          <div class="tv-map-wrap"><div id="tvMap"></div><div id="over"></div></div>
+          <div class="tv-map-wrap"><div id="tvMap"></div><div id="cornerQr"></div><div id="over"></div></div>
           <div class="tv-teams" id="teams"></div>
         </div>
       </div>`;
@@ -190,8 +191,8 @@
     $('#title').textContent = '🦃 ' + d.game.name;
     renderStatus();
     renderClock();
-    if (changed('area', JSON.stringify(d.game.boundary))) drawArea();
-    renderTeams(); renderSpots(); renderPlayers(); renderOverlay();
+    if (changed('area', JSON.stringify([d.game.boundary, d.game.home]))) drawArea();
+    renderTeams(); renderSpots(); renderPlayers(); renderOverlay(); renderAnnounce();
     queueNew();
     // The admin pressed "Play How to play on the TV" (only plays if pressed in the last minute).
     const tut = d.game.tutorial_at;
@@ -283,13 +284,16 @@
     if (!b) return;
     L.polygon([[[-85, -180], [-85, 180], [85, 180], [85, -180]], b], { stroke: false, fillColor: '#000', fillOpacity: 0.3, interactive: false }).addTo(T.L.area);
     L.polygon(b, { color: '#e8590c', weight: 4, fill: false, interactive: false }).addTo(T.L.area);
+    const h = T.d.game.home;
+    if (h) L.marker([h.lat, h.lng], { icon: L.divIcon({ className: '', html: '<div class="home-pin">🏠</div>', iconSize: [34, 34], iconAnchor: [17, 17] }), interactive: false, zIndexOffset: 400 })
+      .bindTooltip(esc(h.label), { permanent: true, direction: 'bottom', offset: [0, 14], className: 'home-label' }).addTo(T.L.area);
     fit();
   }
   function fit() {
-    const b = T.d?.game?.boundary;
+    const b = T.d?.game?.boundary, h = T.d?.game?.home;
     if (!T.map || !b) return;
     T.map.invalidateSize();
-    T.map.fitBounds(b, { padding: [24, 24], animate: false });
+    T.map.fitBounds(h ? [...b, [h.lat, h.lng]] : b, { padding: [24, 24], animate: false });
   }
 
   // Optional layer: every hunt spot, numbered and colored by difficulty (green Easy, yellow Medium, red Hard).
@@ -347,6 +351,27 @@
       html = `<div class="map-over"><div><div style="font-size:3.5em">🏁</div><h1>Time's up!</h1><p>Everyone head back.<br>Results coming soon…</p></div></div>`;
     }
     if (changed('over', html)) $('#over').innerHTML = html;
+    // Small join code during the game for anyone who arrives late.
+    const corner = g.status === 'live' && opt('joinCode');
+    if (changed('corner', corner)) {
+      $('#cornerQr').innerHTML = corner ? (() => { const q = qrcode(0, 'M'); q.addData(location.origin + '/'); q.make(); return `<div class="corner-qr">${q.createSvgTag({ cellSize: 4, margin: 1, scalable: true })}<span>Late? Scan to join</span></div>`; })() : '';
+    }
+  }
+
+  // The host's message ("Dinner's ready!"), big across the screen for half a minute.
+  function renderAnnounce() {
+    const a = T.d.game.announce;
+    if (!a) { T.annAt = null; $('#tvAnn')?.remove(); return; }
+    if (a.at === T.annAt) return;
+    const first = T.annAt === undefined; T.annAt = a.at;
+    if (first && T.d.now - a.at > 120000) return; // the TV just opened: don't replay an old message
+    $('#tvAnn')?.remove();
+    const el = document.createElement('div'); el.id = 'tvAnn'; el.className = 'tv-ann';
+    el.innerHTML = `<div class="tv-ann-box"><div class="tv-ann-icon">📣</div><div><div class="tv-ann-from">Message from the host</div><div class="tv-ann-text">${esc(a.text)}</div></div></div>`;
+    el.onclick = () => el.remove();
+    document.body.appendChild(el);
+    Sound.chime(); setTimeout(() => Sound.chime(), 900);
+    clearTimeout(T.annTimer); T.annTimer = setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 600); }, 30000);
   }
 
   // ---------- new-photo pop-up ----------

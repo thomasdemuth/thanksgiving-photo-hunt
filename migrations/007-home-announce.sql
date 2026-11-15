@@ -1,0 +1,5 @@
+ALTER TABLE games ADD COLUMN home_lat REAL;
+ALTER TABLE games ADD COLUMN home_lng REAL;
+ALTER TABLE games ADD COLUMN home_label TEXT;
+ALTER TABLE games ADD COLUMN announce_text TEXT;
+ALTER TABLE games ADD COLUMN announce_at INTEGER;

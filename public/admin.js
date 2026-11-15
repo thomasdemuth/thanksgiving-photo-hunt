@@ -502,6 +502,7 @@
               <button class="btn-small" id="drawBtn">✏️ Redraw play area</button>
               <button class="btn-small" id="defaultBtn" title="Canal, Greenwich, Christopher, 6th Ave">Reset area</button>
             </div>
+            <div class="row" style="gap:.3em;margin-top:.3em" id="homeRow"></div>
             <div class="filters" id="chips"></div>
           </div>
           <div class="side-list" id="sideList"></div>
@@ -511,6 +512,7 @@
     A.areaLayer = L.layerGroup().addTo(m);
     A.pinLayer = L.layerGroup().addTo(m);
     A.ringLayer = L.layerGroup().addTo(m);
+    A.homeLayer = L.layerGroup().addTo(m);
     A.markers = {};
     m.on('click', onMapClick);
     m.on('zoomend', drawRings);
@@ -524,6 +526,7 @@
     $('#defaultBtn').onclick = async () => { if (!confirm('Reset the play area to Canal, Greenwich, Christopher and 6th Ave?')) return; await api('/game', 'PATCH', { boundary: 'default' }); await refresh(); drawArea2(true); };
     drawArea2(true);
     drawPins();
+    drawHome();
     renderSide();
     const fit = A.d.game.boundary || A.d.photos.filter((p) => p.lat != null).map((p) => [p.lat, p.lng]);
     if (fit.length) m.fitBounds(fit, { padding: [20, 20] });
@@ -534,7 +537,7 @@
     const el = $('#mapHint'); if (!el) return;
     el.innerHTML = text ? `<div class="map-hint">${text}${cancel ? '<button class="btn-small" id="cancelHint">Cancel</button>' : ''}</div>` : '';
     const c = $('#cancelHint');
-    if (c) c.onclick = () => { A.placing = null; if (A.drawing) { A.drawing = null; $('#drawBtn').textContent = '✏️ Redraw play area'; drawArea2(); } hint(''); };
+    if (c) c.onclick = () => { A.placing = null; A.placingHome = false; if (A.drawing) { A.drawing = null; $('#drawBtn').textContent = '✏️ Redraw play area'; drawArea2(); } hint(''); };
   }
 
   function drawArea2() {
@@ -551,6 +554,25 @@
     if (pts.length >= 3) { await api('/game', 'PATCH', { boundary: pts }); await refresh(); }
     drawArea2();
   }
+
+  // Home base: a pin every player sees on their map (where the TV and dinner are).
+  const homeIcon = () => L.divIcon({ className: '', html: '<div class="home-pin">🏠</div>', iconSize: [34, 34], iconAnchor: [17, 17] });
+  function drawHome() {
+    const h = A.d.game.home;
+    A.homeLayer.clearLayers();
+    if (h) {
+      const mk = L.marker([h.lat, h.lng], { icon: homeIcon(), draggable: true, zIndexOffset: 900 }).addTo(A.homeLayer)
+        .bindTooltip(esc(h.label), { permanent: true, direction: 'bottom', offset: [0, 14], className: 'home-label' });
+      mk.on('dragend', async () => { const ll = mk.getLatLng(); await saveHome({ lat: +ll.lat.toFixed(6), lng: +ll.lng.toFixed(6), label: h.label }); });
+    }
+    $('#homeRow').innerHTML = h
+      ? `<span class="small grow">🏠 <b>${esc(h.label)}</b> <span class="muted">(drag to move)</span></span><button class="btn-small" id="homeName">Rename</button><button class="btn-small" id="homeDel">Remove</button><a class="btn btn-small" href="/area" target="_blank">🖨 Map for players</a>`
+      : `<button class="btn-small" id="homeSet">🏠 Set home base</button><span class="small muted grow">Every player sees it on their map.</span><a class="btn btn-small" href="/area" target="_blank">🖨 Map for players</a>`;
+    if ($('#homeSet')) $('#homeSet').onclick = () => { A.placing = null; A.drawing = null; A.placingHome = true; hint('Click where home base is (where the TV and dinner are).', true); };
+    if ($('#homeName')) $('#homeName').onclick = async () => { const label = prompt('What should players see on the map?', h.label); if (label?.trim()) await saveHome({ ...h, label: label.trim() }); };
+    if ($('#homeDel')) $('#homeDel').onclick = async () => { if (confirm('Remove the home base pin from everyone\'s map?')) await saveHome(null); };
+  }
+  async function saveHome(home) { await api('/game', 'PATCH', { home }); await refresh(); drawHome(); }
 
   const visible = (p) => A.filter === 'all' || (A.filter === 'nopin' ? p.lat == null : p.difficulty === Number(A.filter));
 
@@ -626,6 +648,13 @@
   async function onMapClick(e) {
     const ll = [+e.latlng.lat.toFixed(6), +e.latlng.lng.toFixed(6)];
     if (A.drawing) { A.drawing.push(ll); drawArea2(); return; }
+    if (A.placingHome) {
+      A.placingHome = false; hint('');
+      const label = prompt('What should players see on the map? (e.g. "Grandma\'s · 12 Bank St")', A.d.game.home?.label || 'Home base');
+      if (label === null) return;
+      await saveHome({ lat: ll[0], lng: ll[1], label: label.trim() || 'Home base' });
+      return;
+    }
     if (A.placing) {
       const pid = A.placing; A.placing = null; hint('');
       await api('/photos/' + pid, 'PATCH', { lat: ll[0], lng: ll[1] });
@@ -660,6 +689,10 @@
               <div class="grow stack" id="controls"></div>
               <div style="width:130px;text-align:center"><div class="qr">${qrSvg(playerUrl)}</div><button class="btn-small" id="tvBtn" style="margin-top:.4em;width:100%">Big join code</button><a class="btn btn-small" href="/tv" target="_blank" style="margin-top:.3em;width:100%">📺 Live TV view</a></div>
             </div></div>
+            <div class="card"><h2>📣 Message everyone</h2><p class="small muted" style="margin:-.2em 0 .5em">Pops up on every phone (with a buzz) and on the TV.</p>
+              <div class="row" style="gap:.3em;margin-bottom:.4em">${["Head back to home base now 🏠", "15 minutes left!", "Dinner's ready! Come back 🦃"].map((t) => `<button class="btn-small" data-ann="${esc(t)}">${esc(t)}</button>`).join('')}</div>
+              <div class="row"><input id="annText" maxlength="200" placeholder="Type a message…" class="grow"><button class="btn-primary btn-small" id="annSend">Send</button></div>
+              <div id="annLast" class="small" style="margin-top:.4em"></div></div>
             <div class="card"><h2>Judge queue <span class="count" id="jCount">0</span></h2><p class="small muted" style="margin:-.2em 0 .6em">Players never see yes or no until you reveal the results.</p><div id="judge"></div><div id="farList"></div></div>
             <div class="card"><h2>Every photo sent <span class="count" id="fCount"></span></h2><p class="small muted" style="margin:-.2em 0 .5em">Change any call at any time with Yes, No, or Reset (back to what the GPS said).</p>
               <div class="filters" id="fFilters" style="margin:0 0 .5em"></div><div id="manual"></div><div class="feed" id="feed"></div></div>
@@ -670,17 +703,33 @@
           </div>
         </div></div>`;
       $('#tvBtn').onclick = tv;
+      document.querySelectorAll('[data-ann]').forEach((b) => b.onclick = () => { $('#annText').value = b.dataset.ann; $('#annText').focus(); });
+      const sendAnn = async () => {
+        const t = $('#annText').value.trim(); if (!t) return $('#annText').focus();
+        $('#annSend').disabled = true;
+        try { await api('/game', 'PATCH', { announce: t }); $('#annText').value = ''; await refresh(); } finally { $('#annSend').disabled = false; }
+        render();
+      };
+      $('#annSend').onclick = sendAnn;
+      $('#annText').onkeydown = (e) => { if (e.key === 'Enter') sendAnn(); };
       const m = A.maps.live = baseMap('liveMap');
       // On touch screens one finger scrolls the page instead of getting stuck moving the map; pinch still zooms.
       if (L.Browser.touch && innerWidth < 900) m.dragging.disable();
       A.liveLayer = L.layerGroup().addTo(m);
       drawArea(L.layerGroup().addTo(m), A.d.game.boundary);
       if (A.d.game.boundary) m.fitBounds(A.d.game.boundary, { padding: [10, 10] });
+      const h = A.d.game.home;
+      if (h) L.marker([h.lat, h.lng], { icon: homeIcon(), interactive: false, zIndexOffset: -50 }).addTo(m);
     }
     const { game, players, finds, teams, photos } = A.d;
     const busy = document.activeElement && ['SELECT', 'INPUT'].includes(document.activeElement.tagName);
     // Only redraw a section when its content changed, so buttons don't move under the mouse.
     const changed = (key, val) => { if (!full && A.sig?.[key] === val) return false; (A.sig ||= {})[key] = val; return true; };
+    const ann = A.d.game.announce;
+    if (changed('ann', JSON.stringify(ann))) {
+      $('#annLast').innerHTML = ann ? `<span class="muted">Last sent ${new Date(ann.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}:</span> “${esc(ann.text)}” <button class="btn-small" id="annClear">Take it down</button>` : '';
+      if ($('#annClear')) $('#annClear').onclick = async () => { await api('/game', 'PATCH', { announce: null }); await refresh(); render(); };
+    }
     $('#tiles').innerHTML = scoreTiles();
 
     const waiting = finds.filter((f) => f.status === 'pending').length;
@@ -755,11 +804,13 @@
     // Players + manual fixes
     $('#pCount').textContent = players.length;
     const offline = (p) => !p.last_seen_at || A.d.now - p.last_seen_at > 2 * 60000;
+    const isOut = (p) => game.status === 'live' && p.last_lat != null && !insideArea(p.last_lat, p.last_lng, game.boundary);
     // Location status per phone, so problems show up in the lobby before the start.
     const locTag = (p) => offline(p) ? `<span class="muted">· app closed ${p.last_seen_at ? ago(p.last_seen_at) : ''}</span>`
       : p.loc_state === 'off' ? '<span class="loc-tag bad">📍 location off</span>'
       : !p.loc_at ? '<span class="loc-tag warn">📍 no location yet</span>'
       : A.d.now - p.loc_at > 3 * 60000 ? `<span class="loc-tag warn">📍 ${ago(p.loc_at)}</span>`
+      : isOut(p) ? '<span class="loc-tag bad">🚧 outside the area</span>'
       : '<span class="loc-tag ok">📍 ok</span>';
     const locBad = players.filter((p) => !offline(p) && (p.loc_state === 'off' || !p.loc_at)).length;
     if (!busy && changed('players', JSON.stringify(players.map((p) => [p.id, p.team_id, p.name, locTag(p)])) + teams.map((t) => t.id + t.name).join())) {
@@ -833,8 +884,9 @@
     A.liveLayer.clearLayers();
     players.filter((p) => p.last_lat != null).forEach((p) => {
       const t = teamOf(p.team_id), stale = A.d.now - (p.loc_at || p.last_seen_at) > 5 * 60000;
-      L.marker([p.last_lat, p.last_lng], { icon: L.divIcon({ className: '', html: `<div class="player-pin ${stale ? 'stale' : ''}" style="background:${esc(t.color)}"></div>`, iconSize: [18, 18] }) })
-        .bindTooltip(`<b>${esc(p.name)}</b> · ${esc(t.name)}<br>${ago(p.loc_at || p.last_seen_at)}`, { direction: 'top', offset: [0, -8] }).addTo(A.liveLayer);
+      const out = !stale && isOut(p);
+      L.marker([p.last_lat, p.last_lng], { icon: L.divIcon({ className: '', html: `<div class="player-pin ${stale ? 'stale' : ''} ${out ? 'out' : ''}" style="background:${esc(t.color)}"></div>`, iconSize: [18, 18] }) })
+        .bindTooltip(`<b>${esc(p.name)}</b> · ${esc(t.name)}${out ? ' · <b style="color:#c0261c">outside the area</b>' : ''}<br>${ago(p.loc_at || p.last_seen_at)}`, { direction: 'top', offset: [0, -8] }).addTo(A.liveLayer);
     });
   }
 

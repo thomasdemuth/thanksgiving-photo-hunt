@@ -274,6 +274,10 @@ async function gameState(env, game) {
     game: {
       id: game.id, name: game.name, status: effectiveStatus(game), boundary: game.boundary_geojson ? JSON.parse(game.boundary_geojson) : null,
       started_at: game.started_at, ends_at: game.ends_at, revealed: !!game.revealed_at, tutorial_at: game.tutorial_at || null,
+      // A spot everyone sees on the map (where the TV and dinner are).
+      home: game.home_lat != null ? { lat: game.home_lat, lng: game.home_lng, label: game.home_label || 'Home base' } : null,
+      // The host's latest message to every phone and the TV.
+      announce: game.announce_at ? { text: game.announce_text, at: game.announce_at } : null,
     },
     teams: scored,
     photos: photos.results.map((p) => ({
@@ -543,7 +547,7 @@ async function admin(request, env, url, who) {
     if (prev) {
       stmts.push(env.DB.prepare(`INSERT INTO photos (id, game_id, title, difficulty, points, lat, lng, radius_m, hint, image_key, thumb_key, sort)
         SELECT lower(hex(randomblob(8))), ?, title, difficulty, points, lat, lng, radius_m, hint, image_key, thumb_key, sort FROM photos WHERE game_id = ?`).bind(g.id, prev.id));
-      stmts.push(env.DB.prepare('UPDATE games SET boundary_geojson = ? WHERE id = ?').bind(prev.boundary_geojson || JSON.stringify(DEFAULT_BOUNDARY), g.id));
+      stmts.push(env.DB.prepare('UPDATE games SET boundary_geojson = ?, home_lat = ?, home_lng = ?, home_label = ? WHERE id = ?').bind(prev.boundary_geojson || JSON.stringify(DEFAULT_BOUNDARY), prev.home_lat ?? null, prev.home_lng ?? null, prev.home_label ?? null, g.id));
     } else {
       stmts.push(env.DB.prepare('UPDATE games SET boundary_geojson = ? WHERE id = ?').bind(JSON.stringify(DEFAULT_BOUNDARY), g.id));
     }
@@ -563,7 +567,7 @@ async function admin(request, env, url, who) {
     ]);
     const s = await gameState(env, game);
     return json({
-      game: { ...game, status: effectiveStatus(game), boundary: game.boundary_geojson ? JSON.parse(game.boundary_geojson) : null },
+      game: { ...game, status: effectiveStatus(game), boundary: s.game.boundary, home: s.game.home, announce: s.game.announce },
       teams: teams.results, photos: photos.results, players: players.results, finds: finds.results,
       scores: s.teams, now: now(),
     });
@@ -574,6 +578,15 @@ async function admin(request, env, url, who) {
     const sets = [], vals = [];
     if (b.name !== undefined) { sets.push('name = ?'); vals.push(String(b.name).slice(0, 60)); }
     if (b.boundary !== undefined) { sets.push('boundary_geojson = ?'); vals.push(b.boundary ? JSON.stringify(b.boundary === 'default' ? DEFAULT_BOUNDARY : b.boundary) : null); }
+    if (b.home !== undefined) {
+      const h = b.home, ok = h && Number.isFinite(+h.lat) && Number.isFinite(+h.lng);
+      sets.push('home_lat = ?', 'home_lng = ?', 'home_label = ?');
+      vals.push(ok ? +h.lat : null, ok ? +h.lng : null, ok ? String(h.label || 'Home base').slice(0, 40) : null);
+    }
+    if (b.announce !== undefined) {
+      const t = String(b.announce || '').trim().slice(0, 200);
+      sets.push('announce_text = ?', 'announce_at = ?'); vals.push(t || null, t ? now() : null);
+    }
     if (b.action === 'start') {
       // Starting twice would reset the clock, so only start a game that isn't live.
       if (['live', 'starting'].includes(effectiveStatus(game))) return json({ error: 'The game is already live.' }, 400);
@@ -600,7 +613,7 @@ async function admin(request, env, url, who) {
         env.DB.prepare('DELETE FROM pings WHERE game_id = ?').bind(game.id),
         env.DB.prepare('DELETE FROM players WHERE game_id = ?').bind(game.id),
       ]);
-      sets.push("status = 'setup'", 'started_at = NULL', 'ends_at = NULL', 'revealed_at = NULL');
+      sets.push("status = 'setup'", 'started_at = NULL', 'ends_at = NULL', 'revealed_at = NULL', 'announce_text = NULL', 'announce_at = NULL');
     }
     if (!sets.length) return json({ error: 'Nothing to change' }, 400);
     await env.DB.prepare(`UPDATE games SET ${sets.join(', ')} WHERE id = ?`).bind(...vals, game.id).run();

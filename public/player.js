@@ -163,6 +163,35 @@
     const r = Math.PI / 180, x = (d - b) * r * Math.cos(((a + c) / 2) * r), y = (c - a) * r;
     return Math.sqrt(x * x + y * y) * 6371000;
   }
+  function insideArea(lat, lng, poly) {
+    let inside = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const [yi, xi] = poly[i], [yj, xj] = poly[j];
+      if ((yi > lat) !== (yj > lat) && lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) inside = !inside;
+    }
+    return inside;
+  }
+  // Meters from a point to the nearest edge of the play area.
+  function edgeDist(lat, lng, poly) {
+    const k = Math.cos(lat * Math.PI / 180) * 111320, m = 110540;
+    let best = Infinity;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const ax = (poly[j][1] - lng) * k, ay = (poly[j][0] - lat) * m, bx = (poly[i][1] - lng) * k, by = (poly[i][0] - lat) * m;
+      const dx = bx - ax, dy = by - ay, t = Math.max(0, Math.min(1, -(ax * dx + ay * dy) / (dx * dx + dy * dy || 1)));
+      best = Math.min(best, Math.hypot(ax + t * dx, ay + t * dy));
+    }
+    return best;
+  }
+  // How far outside the play area this phone is (0 when inside, or when we can't tell).
+  function outsideBy() {
+    const b = S.data?.game.boundary, f = S.fix;
+    if (!b || b.length < 3 || !f || Date.now() - f.at > 60000 || insideArea(f.lat, f.lng, b)) return 0;
+    const d = edgeDist(f.lat, f.lng, b);
+    return d > Math.max(30, Math.min(f.acc || 0, 80)) ? d : 0; // a little slack for GPS wobble near the line
+  }
+  const distText = (m) => m < 160 ? `${Math.round(m / 10) * 10} m` : `${(m / 1609).toFixed(m < 1609 ? 2 : 1)} mi`;
+  const homeDist = () => { const h = S.data?.game.home, f = S.fix; return h && f && Date.now() - f.at < 180000 ? dist(f.lat, f.lng, h.lat, h.lng) : null; };
+  const directionsUrl = (h) => isIOS ? `https://maps.apple.com/?daddr=${h.lat},${h.lng}&dirflg=w` : `https://www.google.com/maps/dir/?api=1&destination=${h.lat},${h.lng}&travelmode=walking`;
 
   // Every 15 s: make sure we're following the phone, and ask directly if nothing has come in lately.
   function locTick() {
@@ -356,7 +385,7 @@
           <div class="map-wrap">
             <div id="map"></div>
             <div class="map-key" id="mapKey"></div>
-            <div class="map-buttons"><button id="fitArea">Whole area</button><button class="btn-primary" id="centerMe">Show me</button></div>
+            <div class="map-buttons"><button id="homeBtn" class="hidden" aria-label="Home base">🏠</button><button id="fitArea">Whole area</button><button class="btn-primary" id="centerMe">Show me</button></div>
           </div>
         </div>
         <div class="screen hidden" id="vScores"></div>
@@ -369,6 +398,7 @@
       <div class="toasts" id="toasts" aria-live="polite"></div>`;
     document.querySelectorAll('[data-view]').forEach((b) => b.onclick = () => go(b.dataset.view));
     $('#fitArea').onclick = () => fitArea();
+    $('#homeBtn').onclick = () => { const h = S.data?.game.home; if (h && S.map) S.map.flyTo([h.lat, h.lng], 17, { duration: 0.6 }); };
     $('#centerMe').onclick = () => { if (S.fix && S.map) S.map.flyTo([S.fix.lat, S.fix.lng], 17, { duration: 0.6 }); else locTick(); };
     $('#cam').onchange = onPhotoTaken;
     go('photos');
@@ -422,7 +452,7 @@
         if (wasOffline) renderTop();
       } else {
         S.data = d; S.v = d.v;
-        announce(d);
+        announce(d); hostMessage(d.game);
         renderAll();
       }
       flushQueue();
@@ -456,6 +486,21 @@
     msgs.forEach(([c, m], i) => setTimeout(() => toast(c, m), i * 700));
   }
 
+  // A message the host sent to everyone ("Dinner's ready, come back!"). Shown once per phone.
+  function hostMessage(g) {
+    const a = g.announce, key = 'msg-' + g.id;
+    if (!a) { $('#hostMsg')?.remove(); return; }
+    if (store.get(key, 0) >= a.at) return;
+    store.set(key, a.at);
+    if (Date.now() + S.offset - a.at > 20 * 60000) return; // old news for someone who just opened the app
+    let o = $('#hostMsg');
+    if (!o) { o = document.createElement('div'); o.id = 'hostMsg'; o.className = 'sheet host-msg'; document.body.appendChild(o); }
+    o.innerHTML = `<div class="panel stack center"><div class="hm-icon">📣</div><div class="small muted">Message from the host · ${timeText(a.at)}</div>
+      <p class="hm-text">${esc(a.text)}</p><button class="btn-primary btn-big" id="hmOk">Got it</button></div>`;
+    $('#hmOk').onclick = () => o.remove();
+    if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 400]);
+  }
+
   function toast(color, html) {
     const box = $('#toasts'); if (!box) return;
     box.style.top = Math.round(($('#top')?.getBoundingClientRect().bottom || 90) + 8) + 'px'; // just under the header
@@ -485,7 +530,7 @@
     renderScreen();
     renderTop();
     const sig = JSON.stringify([S.data.finds.map((f) => [f.id, f.counted]), S.data.photos.map((p) => p.id + p.points + p.difficulty + (p.hint || '')),
-      S.data.teams.map((t) => [t.score, t.submitted, t.name, t.roster]), S.data.game.status, S.data.game.revealed, S.filter, S.diff, S.sort, S.locDenied, store.get('queue', []).length]);
+      S.data.teams.map((t) => [t.score, t.submitted, t.name, t.roster]), S.data.game.status, S.data.game.revealed, S.data.game.home, S.data.game.boundary, S.filter, S.diff, S.sort, S.locDenied, store.get('queue', []).length]);
     if (!force && sig === S.sig) { if (S.view === 'map') updateMates(); return; }
     S.sig = sig;
     renderPhotos(); renderScores();
@@ -560,9 +605,10 @@
         : `<div class="cd"><p>Get ready!</p><div class="cd-n" key="${n}">${n}</div><p>The hunt starts in ${n} second${n === 1 ? '' : 's'}</p></div>`;
       if (ph === 'go' && S.lastPh !== 'go' && navigator.vibrate) navigator.vibrate([150, 80, 300]);
     } else {
-      const q = store.get('queue', []).length;
-      sig = 'over' + q;
-      html = `<div class="cd over"><div class="cd-icon">🏁</div><h1>Game over!</h1><p>See the results on the main screen.</p>
+      const q = store.get('queue', []).length, h = g.home, hd = homeDist();
+      sig = 'over' + q + (h ? h.lat + h.label : '') + (hd == null ? '' : Math.round(hd / 50));
+      html = `<div class="cd over"><div class="cd-icon">🏁</div><h1>Game over!</h1><p>${h ? `Head back to <b>${esc(h.label)}</b>. ` : ''}See the results on the main screen.</p>
+        ${h ? `<p class="small">${hd != null ? `🏠 ${distText(hd)} away · ` : ''}<a href="${directionsUrl(h)}" target="_blank" rel="noopener" style="color:inherit">Walking directions</a></p>` : ''}
         ${q ? `<p class="small">📶 Sending ${q} saved photo${q > 1 ? 's' : ''} when you have signal. Keep this open for a moment.</p>` : ''}</div>`;
     }
     S.lastPh = ph;
@@ -651,21 +697,27 @@
     const el = $('#locBar'); if (!el) return;
     const st = locStatus();
     const show = st === 'off' || (st === 'searching' && Date.now() - S.locSince > 30000);
-    const sig = show ? st : '';
+    // Outside the orange line while the hunt is on.
+    const out = !show && S.data?.game.status === 'live' && phase() === 'game' ? outsideBy() : 0;
+    if (out && !S.wasOut && navigator.vibrate) navigator.vibrate([300, 150, 300]);
+    S.wasOut = !!out;
+    const sig = show ? st : out ? 'out' + Math.round(out / 50) : '';
     if (sig === S.locBarSig) return;
     S.locBarSig = sig;
-    el.className = show ? 'loc-bar ' + st : '';
-    el.innerHTML = !show ? '' : st === 'off'
+    el.className = show ? 'loc-bar ' + st : out ? 'loc-bar out' : '';
+    el.innerHTML = out ? `<span>🚧 <b>You're outside the game area</b> (${distText(out)} past the orange line). No photos out here.</span><button>Map</button>`
+      : !show ? '' : st === 'off'
       ? '<span>📍 <b>Location is off.</b> Teammates can\'t see you and photos can\'t be sent.</span><button>Fix it</button>'
       : '<span>📡 <b>Looking for your location…</b></span><button>Help</button>';
-    if (show) el.querySelector('button').onclick = showLocHelp;
+    if (out) el.querySelector('button').onclick = () => { go('map'); setTimeout(() => { if (S.map && S.fix) S.map.fitBounds([...S.data.game.boundary, [S.fix.lat, S.fix.lng]], { padding: [20, 20] }); }, 200); };
+    else if (show) el.querySelector('button').onclick = showLocHelp;
   }
 
   function notes() {
     const g = S.data.game;
     let html = '';
     if (g.status === 'setup') html += `<div class="note info">⏳ The game hasn't started yet. Look over the photos and plan your route!</div>`;
-    if (g.status === 'ended' && !g.revealed) html += `<div class="note good">🏁 <b>Game over!</b> Head back to home base. The results will be revealed there.</div>`;
+    if (g.status === 'ended' && !g.revealed) html += `<div class="note good">🏁 <b>Game over!</b> Head back to ${g.home ? `<b>${esc(g.home.label)}</b>` : 'home base'}. The results will be revealed there.</div>`;
     if (g.status === 'ended' && g.revealed) html += `<div class="note good">🏆 <b>The results are in!</b> See Scores.</div>`;
     const q = store.get('queue', []);
     if (q.length) html += `<div class="note">📶 ${q.length} photo${q.length > 1 ? 's' : ''} waiting for signal. We'll send ${q.length > 1 ? 'them' : 'it'} automatically.</div>`;
@@ -985,8 +1037,17 @@
       L.polygon([[[-85, -180], [-85, 180], [85, 180], [85, -180]], b], { stroke: false, fillColor: '#000', fillOpacity: 0.3, interactive: false }).addTo(area);
       L.polygon(b, { color: '#e8590c', weight: 4, fill: false, interactive: false }).addTo(area);
     }
+    const h = S.data.game.home;
+    if (h) {
+      const hd = homeDist();
+      L.marker([h.lat, h.lng], { icon: L.divIcon({ className: '', html: '<div class="home-pin">🏠</div>', iconSize: [34, 34], iconAnchor: [17, 17] }), zIndexOffset: 800 })
+        .bindTooltip(esc(h.label), { permanent: true, direction: 'bottom', offset: [0, 14], className: 'home-label' })
+        .bindPopup(`<b>🏠 ${esc(h.label)}</b>${hd != null ? `<br>${distText(hd)} from you` : ''}<br><a href="${directionsUrl(h)}" target="_blank" rel="noopener">Walking directions</a>`)
+        .addTo(area);
+    }
+    $('#homeBtn').classList.toggle('hidden', !h);
     const team = myTeam(), color = team?.color || '#2f855a';
-    $('#mapKey').innerHTML = `<div><span class="swatch" style="background:#0039a6"></span> You + your trail</div>
+    $('#mapKey').innerHTML = `${h ? `<div><span class="key-home">🏠</span> ${esc(h.label)}</div>` : ''}<div><span class="swatch" style="background:#0039a6"></span> You + your trail</div>
       <div><span class="swatch" style="background:${esc(color)};outline:2px solid #fff;outline-offset:-4px"></span> Teammates</div>
       <div><span class="key-pin" style="background:${esc(color)}">✓</span> Sent by your team</div>`;
     // Spots where your team sent photos, marked with a check.

@@ -412,3 +412,13 @@ body.locked { overflow: hidden; }
 .loc-tag.ok { color: #0a6b2e; background: #e3f5e9; }
 .loc-tag.warn { color: #7a5600; background: #fdf1cc; }
 .loc-tag.bad { color: #fff; background: #c0261c; }
+.loc-bar.out { background: #e8590c; color: #fff; }
+.home-pin { width: 34px; height: 34px; border-radius: 50%; background: #fff; border: 3px solid #1f1a17; box-shadow: 0 2px 6px rgba(0,0,0,.35); font-size: 18px; line-height: 28px; text-align: center; }
+.home-label { font-weight: 700; font-size: 12px; padding: 1px 6px; }
+.key-home { display: inline-block; width: 1.4em; text-align: center; }
+.map-buttons button.hidden { display: none; }
+.host-msg { z-index: 90; }
+.host-msg .panel { gap: .5em; }
+.hm-icon { font-size: 3em; line-height: 1; }
+.hm-text { font-size: 1.5em; font-weight: 700; margin: .2em 0 .4em; white-space: pre-wrap; overflow-wrap: anywhere; }
+.player-pin.out { box-shadow: 0 0 0 3px #c0261c, 0 0 10px #c0261c; }

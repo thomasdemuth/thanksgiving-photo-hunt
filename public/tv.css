@@ -349,3 +349,17 @@ body.idle .tut-skip { opacity: 0; }
 .tut-callouts div:nth-child(2) { animation-delay: 1.8s; }
 .tut-callouts b { color: #fff; display: block; }
 .tut-note { font-size: 1.4em; color: #e9dfd6; text-align: center; margin: .4em 0 0; line-height: 1.35; }
+/* Home base pin, late-join code, host message */
+.home-pin { width: 38px; height: 38px; border-radius: 50%; background: #fff; border: 3px solid #1f1a17; box-shadow: 0 2px 8px rgba(0,0,0,.4); font-size: 20px; line-height: 32px; text-align: center; }
+.home-label { font-weight: 700; font-size: 15px; padding: 2px 8px; }
+#cornerQr { position: absolute; left: 14px; bottom: 14px; z-index: 700; }
+.corner-qr { background: #fff; border-radius: 10px; padding: 8px 8px 6px; box-shadow: 0 2px 10px rgba(0,0,0,.25); width: 150px; text-align: center; }
+.corner-qr svg { width: 100%; height: auto; display: block; }
+.corner-qr span { display: block; font-weight: 700; font-size: 14px; margin-top: 2px; }
+.tv-ann { position: fixed; inset: 0; z-index: 3200; display: flex; align-items: flex-start; justify-content: center; padding-top: 12vh; background: rgba(0,0,0,.35); animation: annIn .4s ease-out; cursor: pointer; }
+.tv-ann.out { opacity: 0; transition: opacity .6s; }
+.tv-ann-box { display: flex; align-items: center; gap: .6em; max-width: 80vw; background: #fff; border: 6px solid var(--orange); border-radius: 18px; padding: .8em 1.4em; box-shadow: 0 10px 40px rgba(0,0,0,.4); }
+.tv-ann-icon { font-size: 5em; line-height: 1; }
+.tv-ann-from { font-size: 1.3em; color: var(--muted); font-weight: 700; }
+.tv-ann-text { font-size: 3.6em; font-weight: 700; line-height: 1.1; overflow-wrap: anywhere; }
+@keyframes annIn { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: none; } }
