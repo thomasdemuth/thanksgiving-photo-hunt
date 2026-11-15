@@ -236,6 +236,34 @@ const pvL = await post('/api/poll', { v: pvS.v }, c.token);
 t('after the countdown the game is live (phones get the change)', !pvL.same && pvL.game.status === 'live', pvL.game?.status);
 t('a reset game can start again and take photos', (await send(c.token, rp)).result === 'submitted');
 
+// Admin invite links and personal passwords
+const authPost = (path, body) => post('/api/auth' + path, body);
+const asAdmin = (tok, path, method = 'GET', body) => fetch(base + '/api/admin' + path, { method, headers: { 'x-admin': tok, 'content-type': 'application/json' }, body: body && JSON.stringify(body) }).then(async (r) => ({ status: r.status, ...(await r.json().catch(() => ({}))) }));
+const inv = await admin('/admins/invite', 'POST', { name: 'Dad' });
+const look = await fetch(base + '/api/auth/invite?t=' + encodeURIComponent(inv.token)).then((r) => r.json());
+t('an invite link shows who it is for', look.ok && look.name === 'Dad', look);
+t('a short password is refused', (await authPost('/accept', { token: inv.token, password: 'short' })).status === 400);
+const acc = await authPost('/accept', { token: inv.token, password: 'gobble-gobble-26' });
+t('the invite sets a password and signs in', !!acc.token && (await asAdmin(acc.token, '/state')).status === 200, acc);
+t('an invite link works only once', (await authPost('/accept', { token: inv.token, password: 'another-pass-9' })).status === 400);
+const li = await authPost('/login', { password: 'gobble-gobble-26' });
+t('the new password signs in on another device', !!li.token && li.name === 'Dad', li);
+t('a wrong password is refused', (await authPost('/login', { password: 'nope-nope-nope' })).status === 401);
+const mainLogin = await authPost('/login', { password: pw });
+t('the main password still signs in', !!mainLogin.token && (await asAdmin(mainLogin.token, '/state')).status === 200);
+t('a made-up token is refused', (await asAdmin('not-a-real-token', '/state')).status === 401);
+const inv2 = await admin('/admins/invite', 'POST', { name: 'dad' });
+await authPost('/accept', { token: inv2.token, password: 'new-pass-for-dad' });
+let list = await admin('/admins');
+t('a new link for the same person replaces their password (no duplicate)', list.admins.filter((a) => a.name.toLowerCase() === 'dad').length === 1);
+t('old devices are signed out after a password reset', (await asAdmin(acc.token, '/state')).status === 401);
+await admin('/admins/' + list.admins.find((a) => a.name.toLowerCase() === 'dad').id, 'DELETE');
+t('removing an admin stops their password', (await authPost('/login', { password: 'new-pass-for-dad' })).status === 401);
+const inv3 = await admin('/admins/invite', 'POST', { name: 'Uncle' });
+list = await admin('/admins');
+await admin('/admins/invites/' + encodeURIComponent(list.invites.find((i) => i.name === 'Uncle').id), 'DELETE');
+t('a cancelled invite link stops working', !(await fetch(base + '/api/auth/invite?t=' + encodeURIComponent(inv3.token)).then((r) => r.json())).ok);
+
 // Fresh game
 await admin('/teams/' + team.id, 'PATCH', { name: 'Turkeys' });
 await admin('/game', 'POST', { name: 'Test Hunt' });

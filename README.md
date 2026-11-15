@@ -3,7 +3,7 @@
 Phone website for a neighborhood photo scavenger hunt. Players find the spot in each photo and send a picture from there. The server quietly marks each one right or wrong by GPS, and nobody sees the results until the organizer reveals them at the end.
 
 - Player: https://photo-hunt.twmdemuth.workers.dev
-- Admin: https://photo-hunt.twmdemuth.workers.dev/admin (password in `admin-password.txt`, not committed)
+- Admin: https://photo-hunt.twmdemuth.workers.dev/admin (main password in `admin-password.txt`, not committed). Photos & teams → Admins → "Create invite link" lets someone set their own admin password (one-time link, 7 days).
 - TV at home base: https://photo-hunt.twmdemuth.workers.dev/tv (same password). Map of where everyone is, one column per team with every photo they sent (right/wrong and how far off), a big pop-up for each new photo, and a step-by-step final reveal with sound. ⚙ Settings: no spoilers, pop-ups, trails, names, sound. Click the page once so the browser allows sound. Keys: F full screen, H no spoilers, R replay the reveal.
 
 ## How a game runs

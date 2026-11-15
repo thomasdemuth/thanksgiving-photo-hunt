@@ -54,14 +54,18 @@
     $('#app').innerHTML = `
       <div class="tv-login card stack">
         <h1 class="center">📺 Photo Hunt TV</h1>
-        <form id="lf" class="stack"><label for="pw">Admin password</label><input id="pw" type="password" autocomplete="current-password" required autofocus>
+        <form id="lf" class="stack"><label for="pw">Admin password (yours or the main one)</label><input id="pw" type="password" autocomplete="current-password" required autofocus>
         <button class="btn-primary btn-big">Start the TV view</button></form>
         <p class="error center">${esc(err || '')}</p>
       </div>`;
     $('#lf').onsubmit = async (e) => {
       e.preventDefault();
-      T.pw = $('#pw').value.trim();
-      try { await api('/login'); localStorage.setItem('adminPw', T.pw); boot(); } catch { /* login() already shown */ }
+      try {
+        const res = await fetch('/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: $('#pw').value }) });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { login(data.error || 'Wrong password.'); return; }
+        T.pw = data.token; localStorage.setItem('adminPw', data.token); boot();
+      } catch { login("Can't reach the game. Check your connection."); }
     };
   }
 

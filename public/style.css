@@ -284,7 +284,7 @@ body.admin input, body.admin select { min-height: 38px; }
 .gallery figure { margin: 0; }
 .gallery img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: var(--radius); }
 .gallery figcaption { font-size: .78em; color: var(--muted); margin-top: .2em; }
-.login { max-width: 380px; margin: 12vh auto; }
+.login { max-width: 380px; margin: 12vh auto; width: calc(100% - 32px); }
 
 /* Pending-judge shortcut in the admin header */
 .judge-pill { min-height: 30px !important; padding: 0 .7em; font-size: .85em; background: var(--red); border-color: var(--red); color: var(--white); margin-right: .4em; }

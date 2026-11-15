@@ -27,9 +27,11 @@ export default {
     const url = new URL(request.url);
     try {
       if (url.pathname.startsWith('/img/')) return serveImage(env, url.pathname.slice(5));
+      if (url.pathname.startsWith('/api/auth/')) return await auth(request, env, url);
       if (url.pathname.startsWith('/api/admin/')) {
-        if (request.headers.get('x-admin') !== env.ADMIN_PASSWORD) return json({ error: 'Wrong password' }, 401);
-        return await admin(request, env, url);
+        const who = await adminFromRequest(env, request);
+        if (!who) return json({ error: 'Wrong password' }, 401);
+        return await admin(request, env, url, who);
       }
       if (url.pathname.startsWith('/api/')) return await player(request, env, url);
       return new Response('Not found', { status: 404 });
@@ -39,6 +41,113 @@ export default {
     }
   },
 };
+
+// ---------- admin sign-in ----------
+// Two ways in: the main password (ADMIN_PASSWORD secret), or a personal password someone set through a
+// one-time invite link. Signing in gives the browser a session token; only its hash is stored.
+const INVITE_DAYS = 7, SESSION_DAYS = 60, PBKDF2_ROUNDS = 10000; // rounds kept modest for Workers' CPU limit
+const enc = new TextEncoder();
+const b64 = (bytes) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const unb64 = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
+const randomToken = () => b64(crypto.getRandomValues(new Uint8Array(24)));
+const sha256 = async (s) => b64(new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(s))));
+async function pbkdf2(password, saltB64) {
+  const salt = saltB64 ? unb64(saltB64) : crypto.getRandomValues(new Uint8Array(16));
+  const key = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: PBKDF2_ROUNDS }, key, 256);
+  return { salt: b64(salt), hash: b64(new Uint8Array(bits)) };
+}
+// Compare without leaking how many characters matched.
+async function sameSecret(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || !a || !b) return false;
+  const [x, y] = await Promise.all([sha256(a), sha256(b)]);
+  return crypto.subtle.timingSafeEqual(enc.encode(x), enc.encode(y));
+}
+const sessionCache = new Map(); // token hash -> { who, at }, so polling doesn't hit the database every time
+async function adminFromRequest(env, request) {
+  const token = request.headers.get('x-admin');
+  if (!token) return null;
+  if (await sameSecret(token, env.ADMIN_PASSWORD)) return { id: null, name: 'Host' }; // older browsers still hold the main password
+  const th = await sha256(token);
+  const hit = sessionCache.get(th);
+  if (hit && now() - hit.at < 60000) return hit.who;
+  const row = await env.DB.prepare(
+    'SELECT s.admin_id, a.name FROM admin_sessions s LEFT JOIN admins a ON a.id = s.admin_id WHERE s.token_hash = ? AND s.expires_at > ?'
+  ).bind(th, now()).first();
+  // A personal session whose admin was removed doesn't count.
+  const who = row && (row.admin_id === null || row.name) ? { id: row.admin_id, name: row.name || 'Host' } : null;
+  if (who) sessionCache.set(th, { who, at: now() }); else sessionCache.delete(th);
+  return who;
+}
+async function newSession(env, adminId) {
+  const token = randomToken();
+  await env.DB.prepare('INSERT INTO admin_sessions (token_hash, admin_id, created_at, expires_at) VALUES (?, ?, ?, ?)')
+    .bind(await sha256(token), adminId, now(), now() + SESSION_DAYS * 86400000).run();
+  return token;
+}
+// Slow down password guessing: 8 wrong tries from one address within 10 minutes locks it out for a while.
+const failures = new Map();
+function tooManyFailures(ip) { const f = failures.get(ip); return f && f.n >= 8 && now() - f.at < 600000; }
+function noteFailure(ip) { const f = failures.get(ip); failures.set(ip, f && now() - f.at < 600000 ? { n: f.n + 1, at: f.at } : { n: 1, at: now() }); }
+
+async function auth(request, env, url) {
+  const path = url.pathname.replace('/api/auth', ''), method = request.method;
+  const ip = request.headers.get('cf-connecting-ip') || 'local';
+
+  // Sign in with the main password or a personal one.
+  if (path === '/login' && method === 'POST') {
+    if (tooManyFailures(ip)) return json({ error: 'Too many wrong tries. Wait a few minutes and try again.' }, 429);
+    const { password } = await request.json().catch(() => ({}));
+    const pw = String(password || '');
+    if (await sameSecret(pw, env.ADMIN_PASSWORD)) return json({ token: await newSession(env, null), name: 'Host' });
+    const admins = (await env.DB.prepare('SELECT * FROM admins ORDER BY created_at LIMIT 10').all()).results;
+    for (const a of admins) {
+      const { hash } = await pbkdf2(pw, a.salt);
+      if (await sameSecret(hash, a.hash)) return json({ token: await newSession(env, a.id), name: a.name });
+    }
+    noteFailure(ip);
+    return json({ error: 'Wrong password.' }, 401);
+  }
+
+  // Look at an invite link before setting a password.
+  if (path === '/invite' && method === 'GET') {
+    const t = url.searchParams.get('t') || '';
+    const inv = t && await env.DB.prepare('SELECT name, expires_at, used_at FROM admin_invites WHERE token_hash = ?').bind(await sha256(t)).first();
+    if (!inv || inv.used_at || inv.expires_at < now()) return json({ ok: false });
+    return json({ ok: true, name: inv.name });
+  }
+
+  // Set a password through an invite link. Works once.
+  if (path === '/accept' && method === 'POST') {
+    const { token, password } = await request.json().catch(() => ({}));
+    const pw = String(password || '');
+    if (pw.length < 8) return json({ error: 'Use at least 8 characters.' }, 400);
+    if (await sameSecret(pw, env.ADMIN_PASSWORD)) return json({ error: 'Pick a different password from the main one.' }, 400);
+    const th = await sha256(String(token || ''));
+    // Claim the invite first, so the same link can't be used twice at once.
+    const claim = await env.DB.prepare('UPDATE admin_invites SET used_at = ? WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?').bind(now(), th, now()).run();
+    if (!claim.meta.changes) return json({ error: 'This link has expired or was already used. Ask for a new one.' }, 400);
+    const inv = await env.DB.prepare('SELECT name FROM admin_invites WHERE token_hash = ?').bind(th).first();
+    const { salt, hash } = await pbkdf2(pw);
+    // Same name again (e.g. a new link after forgetting the password): replace the password and sign out old devices.
+    const existing = await env.DB.prepare('SELECT id FROM admins WHERE name_key = ?').bind(nameKey(inv.name)).first();
+    let adminId = existing?.id;
+    if (adminId) {
+      await env.DB.batch([
+        env.DB.prepare('UPDATE admins SET salt = ?, hash = ? WHERE id = ?').bind(salt, hash, adminId),
+        env.DB.prepare('DELETE FROM admin_sessions WHERE admin_id = ?').bind(adminId),
+      ]);
+      sessionCache.clear();
+    } else {
+      adminId = id();
+      await env.DB.prepare('INSERT INTO admins (id, name, name_key, salt, hash, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+        .bind(adminId, inv.name, nameKey(inv.name), salt, hash, now()).run();
+    }
+    return json({ token: await newSession(env, adminId), name: inv.name });
+  }
+
+  return json({ error: 'Not found' }, 404);
+}
 
 // ---------- helpers ----------
 
@@ -373,12 +482,52 @@ async function player(request, env, url) {
 
 // ---------- admin API ----------
 
-async function admin(request, env, url) {
+async function admin(request, env, url, who) {
   const path = url.pathname.replace('/api/admin', '');
   const method = request.method;
   const parts = path.split('/').filter(Boolean); // e.g. ['photos', '<id>']
 
-  if (path === '/login') return json({ ok: true });
+  if (path === '/login') return json({ ok: true, name: who.name });
+
+  // Sign this browser out.
+  if (path === '/logout' && method === 'POST') {
+    const th = await sha256(request.headers.get('x-admin') || '');
+    await env.DB.prepare('DELETE FROM admin_sessions WHERE token_hash = ?').bind(th).run();
+    sessionCache.delete(th);
+    return json({ ok: true });
+  }
+
+  // Other admins and open invite links.
+  if (parts[0] === 'admins') {
+    if (method === 'GET' && !parts[1]) {
+      const [admins, invites] = await env.DB.batch([
+        env.DB.prepare('SELECT id, name, created_at FROM admins ORDER BY created_at'),
+        env.DB.prepare('SELECT token_hash AS id, name, created_at, expires_at FROM admin_invites WHERE used_at IS NULL AND expires_at > ? ORDER BY created_at').bind(now()),
+      ]);
+      return json({ admins: admins.results, invites: invites.results, me: who });
+    }
+    if (method === 'POST' && parts[1] === 'invite') {
+      const { name } = await request.json().catch(() => ({}));
+      const clean = String(name || '').trim().slice(0, 30);
+      if (!clean) return json({ error: 'Type their name.' }, 400);
+      const token = randomToken();
+      await env.DB.prepare('INSERT INTO admin_invites (token_hash, name, created_at, expires_at) VALUES (?, ?, ?, ?)')
+        .bind(await sha256(token), clean, now(), now() + INVITE_DAYS * 86400000).run();
+      return json({ token, name: clean, expires_at: now() + INVITE_DAYS * 86400000 });
+    }
+    if (method === 'DELETE' && parts[1] === 'invites' && parts[2]) {
+      await env.DB.prepare('DELETE FROM admin_invites WHERE token_hash = ?').bind(decodeURIComponent(parts[2])).run();
+      return json({ ok: true });
+    }
+    if (method === 'DELETE' && parts[1]) {
+      await env.DB.batch([
+        env.DB.prepare('DELETE FROM admin_sessions WHERE admin_id = ?').bind(parts[1]),
+        env.DB.prepare('DELETE FROM admins WHERE id = ?').bind(parts[1]),
+      ]);
+      sessionCache.clear();
+      return json({ ok: true });
+    }
+  }
 
   if (path === '/game' && method === 'POST') {
     const { name } = await request.json();

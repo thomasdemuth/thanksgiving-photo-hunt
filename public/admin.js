@@ -51,10 +51,101 @@
       </div>`;
     $('#lf').onsubmit = async (e) => {
       e.preventDefault();
-      A.pw = $('#pw').value.trim();
-      try { await api('/login', 'POST'); localStorage.setItem('adminPw', A.pw); boot(); } catch { /* handled */ }
+      const btn = e.target.querySelector('button'); btn.disabled = true;
+      try {
+        const res = await fetch('/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: $('#pw').value }) });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { login(data.error || 'Wrong password.'); return; }
+        A.pw = data.token; localStorage.setItem('adminPw', data.token); boot();
+      } catch { login("Can't reach the game. Check your connection."); }
     };
   }
+
+  // ---------- invite link: set your own admin password ----------
+  async function acceptInvite(token) {
+    let info = {};
+    try { info = await fetch('/api/auth/invite?t=' + encodeURIComponent(token)).then((r) => r.json()); } catch { /* shown below */ }
+    const done = () => { history.replaceState(null, '', location.pathname); }; // drop the token from the address bar
+    if (!info.ok) {
+      $('#app').innerHTML = `<div class="login card stack"><h1 class="center">🦃 Photo Hunt Admin</h1>
+        <p class="note">This link has expired or was already used. Ask for a new one.</p>
+        <button class="btn-big" id="toLogin">I already have a password</button></div>`;
+      $('#toLogin').onclick = () => { done(); A.pw ? boot().catch(() => {}) : login(); };
+      return;
+    }
+    $('#app').innerHTML = `
+      <div class="login card stack">
+        <h1 class="center">🦃 Welcome, ${esc(info.name)}!</h1>
+        <p class="center muted" style="margin:0">Create a password so you can help run the Photo Hunt. You'll use it to sign in on any phone or computer.</p>
+        <form id="af" class="stack">
+          <input type="text" name="username" autocomplete="username" value="${esc(info.name)}" hidden>
+          <div><label for="np">New password</label><input id="np" type="password" autocomplete="new-password" minlength="8" required autofocus></div>
+          <div><label for="np2">Type it again</label><input id="np2" type="password" autocomplete="new-password" minlength="8" required></div>
+          <label class="small" style="font-weight:400;display:flex;gap:.4em;align-items:center"><input type="checkbox" id="showPw" style="width:auto;min-height:0"> Show password</label>
+          <button class="btn-primary btn-big">Create password and sign in</button>
+          <p class="error center" id="afErr"></p>
+        </form>
+      </div>`;
+    $('#showPw').onchange = (e) => { $('#np').type = $('#np2').type = e.target.checked ? 'text' : 'password'; };
+    $('#af').onsubmit = async (e) => {
+      e.preventDefault();
+      const pw = $('#np').value;
+      if (pw.length < 8) { $('#afErr').textContent = 'Use at least 8 characters.'; return; }
+      if (pw !== $('#np2').value) { $('#afErr').textContent = "The two passwords don't match."; return; }
+      const btn = e.target.querySelector('button.btn-primary'); btn.disabled = true;
+      try {
+        const res = await fetch('/api/auth/accept', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token, password: pw }) });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { $('#afErr').textContent = data.error || 'Something went wrong.'; btn.disabled = false; return; }
+        A.pw = data.token; localStorage.setItem('adminPw', data.token); done(); boot();
+      } catch { $('#afErr').textContent = "Can't reach the game. Check your connection."; btn.disabled = false; }
+    };
+  }
+
+  // ---------- other admins ----------
+  async function renderAdmins() {
+    const box = $('#adminsCard'); if (!box) return;
+    let d;
+    try { d = await api('/admins'); } catch { return; }
+    const day = (t) => new Date(t).toLocaleDateString([], { month: 'short', day: 'numeric' });
+    box.innerHTML = `
+      <h2>Admins</h2>
+      <p class="small muted" style="margin:0 0 .5em">Signed in as <b>${esc(d.me.name)}</b>. Invite someone (like Dad) to help run the game with their own password.</p>
+      ${d.admins.map((a) => `<div class="row" style="padding:.25em 0"><span class="grow small"><b>${esc(a.name)}</b> <span class="muted">· added ${day(a.created_at)}</span></span><button class="btn-small kick-btn" data-adel="${esc(a.id)}">Remove</button></div>`).join('')}
+      ${d.invites.map((i) => `<div class="row" style="padding:.25em 0"><span class="grow small">${esc(i.name)} <span class="muted">· invite link open until ${day(i.expires_at)}</span></span><button class="btn-small" data-idel="${esc(i.id)}">Cancel link</button></div>`).join('')}
+      <form id="invForm" class="row" style="margin-top:.5em;gap:.4em"><input id="invName" class="grow" placeholder="Their name, e.g. Dad" maxlength="30" style="min-width:0"><button class="btn-small btn-primary">Create invite link</button></form>
+      <div id="invOut"></div>
+      <button class="btn-ghost small" id="signOut" style="margin-top:.4em;min-height:0;padding:0">Sign out of this browser</button>`;
+    box.querySelectorAll('[data-adel]').forEach((b) => b.onclick = async () => {
+      const a = d.admins.find((x) => x.id === b.dataset.adel);
+      if (!confirm(`Remove ${a.name} as an admin? They'll be signed out everywhere.`)) return;
+      await api('/admins/' + encodeURIComponent(a.id), 'DELETE'); renderAdmins();
+    });
+    box.querySelectorAll('[data-idel]').forEach((b) => b.onclick = async () => { await api('/admins/invites/' + encodeURIComponent(b.dataset.idel), 'DELETE'); renderAdmins(); });
+    $('#invForm').onsubmit = async (e) => {
+      e.preventDefault();
+      const name = $('#invName').value.trim(); if (!name) { $('#invName').focus(); return; }
+      const r = await api('/admins/invite', 'POST', { name });
+      const link = `${location.origin}/admin#invite=${r.token}`;
+      await renderAdmins();
+      $('#invOut').innerHTML = `<div class="note good" style="margin-top:.6em">
+        <b>Send this link to ${esc(r.name)}.</b> It works once and expires in 7 days. It lets them create their own password.
+        <input id="invLink" readonly value="${esc(link)}" style="margin:.5em 0;font-size:.85em">
+        <div class="row" style="gap:.4em"><button class="btn-small btn-primary" id="copyInv">Copy link</button>${navigator.share ? '<button class="btn-small" id="shareInv">Share…</button>' : ''}</div></div>`;
+      $('#invLink').onclick = (ev) => ev.target.select();
+      $('#copyInv').onclick = async () => {
+        try { await navigator.clipboard.writeText(link); } catch { $('#invLink').select(); document.execCommand('copy'); }
+        $('#copyInv').textContent = 'Copied!';
+      };
+      const sh = $('#shareInv'); if (sh) sh.onclick = () => navigator.share({ title: 'Photo Hunt admin', text: `Set your Photo Hunt admin password:`, url: link }).catch(() => {});
+    };
+    $('#signOut').onclick = async () => {
+      if (!confirm('Sign out of the admin page on this browser?')) return;
+      try { await api('/logout', 'POST'); } catch { /* signing out anyway */ }
+      localStorage.removeItem('adminPw'); A.pw = null; login();
+    };
+  }
+
 
   // ---------- shell ----------
   async function boot() {
@@ -173,6 +264,7 @@
             }).join('')}
             <button class="btn-small" id="addTeam">+ Add team</button>
           </div>
+          <div class="card" id="adminsCard"><h2>Admins</h2><p class="small muted">Loading…</p></div>
         </div>
         <div class="card stack">
           <h2>Photos <span class="count">${photos.length}</span>
@@ -209,6 +301,7 @@
     drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('over'); upload([...e.dataTransfer.files]); };
     $('#files').onchange = (e) => upload([...e.target.files]);
     bindRows();
+    renderAdmins();
   }
 
   function photoRow(p, i) {
@@ -765,5 +858,7 @@
     };
   }
 
-  if (A.pw) boot().catch(() => {}); else login();
+  const invite = new URLSearchParams(location.hash.slice(1)).get('invite');
+  if (invite) acceptInvite(invite);
+  else if (A.pw) boot().catch(() => {}); else login();
 })();

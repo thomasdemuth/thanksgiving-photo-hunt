@@ -32,3 +32,13 @@ CREATE INDEX IF NOT EXISTS idx_finds_team_photo ON finds(team_id, photo_id);
 CREATE INDEX IF NOT EXISTS idx_pings_player ON pings(player_id, at);
 CREATE INDEX IF NOT EXISTS idx_pings_game ON pings(game_id, at);
 CREATE INDEX IF NOT EXISTS idx_games_created ON games(created_at);
+CREATE TABLE IF NOT EXISTS admins (
+  id TEXT PRIMARY KEY, name TEXT NOT NULL, name_key TEXT NOT NULL, salt TEXT NOT NULL, hash TEXT NOT NULL, created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS admin_invites (
+  token_hash TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, used_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS admin_sessions (
+  token_hash TEXT PRIMARY KEY, admin_id TEXT, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_admins_name ON admins(name_key);
