@@ -684,7 +684,8 @@
     $('#tiles').innerHTML = scoreTiles();
 
     const waiting = finds.filter((f) => f.status === 'pending').length;
-    if (changed('controls', game.status + '|' + game.ends_at + '|' + game.revealed_at + '|' + waiting)) {
+    const tutOn = game.tutorial_at && A.d.now - game.tutorial_at < 70000; // the demo runs about a minute
+    if (changed('controls', game.status + '|' + game.ends_at + '|' + game.revealed_at + '|' + waiting + '|' + tutOn)) {
       $('#controls').innerHTML = game.status === 'setup' ? `
         <h2>Ready to start?</h2>
         <p class="small muted" style="margin:0"><span id="joinedLine"></span> Scan the code to join.</p>
@@ -707,6 +708,7 @@
         <p class="small muted" style="margin:0">Everyone can see the scores and what counted, on their phones and the TV.</p>
         <button class="btn-big btn-bad" id="resetBtn">↺ Reset and play again</button>
         <div class="row"><button class="btn-small" id="hideBtn">Hide the results again</button><button class="btn-small" id="reopenBtn">Reopen the game</button></div>`;
+      $('#controls').innerHTML += `<div class="row tut-row"><button class="btn-small" id="tutBtn">📺 ${tutOn ? 'Play How to play again' : 'Play How to play on the TV'}</button>${tutOn ? '<button class="btn-small" id="tutStop">■ Stop it</button>' : ''}</div>`;
       const act = (btn, body, ask, after) => btn && (btn.onclick = async () => {
         if (ask && !confirm(ask)) return;
         btn.disabled = true;
@@ -718,6 +720,8 @@
       act($('#reopenBtn'), () => ({ action: 'reopen' }), 'Reopen the game? Results will be hidden again.');
       act($('#revealBtn'), () => ({ action: 'reveal' }), waiting ? `${waiting} answer${waiting > 1 ? 's are' : ' is'} still waiting for the judge and won't count. Reveal anyway?` : 'Reveal the results to everyone now?');
       act($('#hideBtn'), () => ({ action: 'hide' }));
+      act($('#tutBtn'), () => ({ action: 'tutorial' }));
+      act($('#tutStop'), () => ({ action: 'tutorial_stop' }));
       act($('#resetBtn'), () => ({ action: 'reset' }), 'Reset the game?\n\nThis deletes every photo sent, all scores and all trails, and removes every player: everyone goes back to the join screen and scans in again. Teams and the hunt photos stay. This can\'t be undone.\n\n(Tip: download the results CSV first if you want to keep them.)');
     }
     const jl = $('#joinedLine'); if (jl) jl.textContent = `${photos.length} photos · ${players.length} players joined.`;

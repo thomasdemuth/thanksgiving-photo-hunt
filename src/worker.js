@@ -273,7 +273,7 @@ async function gameState(env, game) {
   const data = {
     game: {
       id: game.id, name: game.name, status: effectiveStatus(game), boundary: game.boundary_geojson ? JSON.parse(game.boundary_geojson) : null,
-      started_at: game.started_at, ends_at: game.ends_at, revealed: !!game.revealed_at,
+      started_at: game.started_at, ends_at: game.ends_at, revealed: !!game.revealed_at, tutorial_at: game.tutorial_at || null,
     },
     teams: scored,
     photos: photos.results.map((p) => ({
@@ -589,6 +589,9 @@ async function admin(request, env, url, who) {
       sets.push('revealed_at = ?'); vals.push(now());
     }
     if (b.action === 'hide') { sets.push('revealed_at = NULL'); }
+    // The TV plays its "How to play" demo when this changes; stop clears it.
+    if (b.action === 'tutorial') { sets.push('tutorial_at = ?'); vals.push(now()); }
+    if (b.action === 'tutorial_stop') { sets.push('tutorial_at = NULL'); }
     if (b.action === 'reset') {
       // Play again with the same teams and photos: clear every photo sent and all trails, and remove
       // every player (their phones go back to the join screen).

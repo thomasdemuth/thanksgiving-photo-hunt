@@ -104,11 +104,12 @@
     box.onclick = (e) => e.stopPropagation();
     box.innerHTML = `<h3>TV settings</h3>
       ${Object.entries(SETTINGS).map(([k, s]) => `<label><input type="checkbox" data-opt="${k}" ${opt(k) ? 'checked' : ''}><span><b>${s.label}</b><span>${s.help}</span></span></label>`).join('')}
-      <div class="row"><button id="fsBtn">⛶ Full screen</button>${T.d?.game?.revealed ? '<button id="rvBtn">🏆 Show results again</button>' : ''}</div>
-      <p class="small muted" style="margin:.6em 0 0">Keys: F full screen, H no spoilers, R show results again.</p>`;
+      <div class="row"><button id="fsBtn">⛶ Full screen</button><button id="tutBtn">▶ How to play</button>${T.d?.game?.revealed ? '<button id="rvBtn">🏆 Show results again</button>' : ''}</div>
+      <p class="small muted" style="margin:.6em 0 0">Keys: F full screen, H no spoilers, T how to play, R show results again.</p>`;
     document.body.appendChild(box);
     box.querySelectorAll('[data-opt]').forEach((c) => c.onchange = () => { setOpt(c.dataset.opt, c.checked); applySettings(); });
     $('#fsBtn').onclick = fullscreen;
+    $('#tutBtn').onclick = () => { box.remove(); playTutorial(); };
     const rv = $('#rvBtn'); if (rv) rv.onclick = () => { box.remove(); showReveal(); };
   }
   document.addEventListener('click', () => $('#settings')?.remove());
@@ -192,6 +193,10 @@
     if (changed('area', JSON.stringify(d.game.boundary))) drawArea();
     renderTeams(); renderSpots(); renderPlayers(); renderOverlay();
     queueNew();
+    // The admin pressed "Play How to play on the TV" (only plays if pressed in the last minute).
+    const tut = d.game.tutorial_at;
+    if (tut && tut !== T.tutSeen) { T.tutSeen = tut; if (d.now - tut < 60000 && !d.game.revealed) playTutorial(); }
+    if (!tut && T.tutSeen) { T.tutSeen = null; stopTutorial(); }
     const rkey = d.game.id + ':' + d.game.revealed;
     if (d.game.revealed && T.revealShownFor !== rkey) { T.revealShownFor = rkey; showReveal(); }
     if (!d.game.revealed) { $('#reveal')?.remove(); T.revealShownFor = null; }
@@ -232,6 +237,23 @@
     for (const t of d.teams) if (!T.teamOrder.includes(t.id)) T.teamOrder.push(t.id);
     const order = [...d.teams].sort((a, b) => T.teamOrder.indexOf(a.id) - T.teamOrder.indexOf(b.id));
     const anyPoints = d.teams.some((t) => t.score > 0);
+    // Before the start: just the team names, with everyone who has joined listed big underneath.
+    if (['setup', 'starting'].includes(d.game.status)) {
+      T.knownNames ||= new Set();
+      const html = order.map((t) => `<div class="tcol pre">
+          <div class="thead" style="background:${esc(t.color)}"><div class="row1"><span class="nm">${esc(t.name)}</span></div></div>
+          <div class="tnames ${t.members.length > 7 ? 'many' : ''}">${t.members.length ? t.members.map((n) => `<div class="pname ${T.knownNames.has(t.id + n) ? '' : 'new'}" style="--c:${esc(t.color)}">${esc(n)}</div>`).join('')
+            : '<div class="tempty">Waiting for players…</div>'}</div>
+        </div>`).join('');
+      if (changed('teams', html.replace(/ new"/g, '"'))) {
+        $('#teams').innerHTML = html;
+        const fresh = order.some((t) => t.members.some((n) => !T.knownNames.has(t.id + n)));
+        order.forEach((t) => t.members.forEach((n) => T.knownNames.add(t.id + n)));
+        if (fresh && T.namesPrimed) Sound.chime();
+        T.namesPrimed = true;
+      }
+      return;
+    }
     const html = order.map((t) => {
       const mine = d.finds.filter((f) => f.team_id === t.id).sort((a, b) => b.created_at - a.created_at);
       const tiles = mine.slice(0, 40).map((f) => {
@@ -351,7 +373,7 @@
 
   async function nextPop() {
     T.showing = true;
-    if ($('#reveal')) { await wait(2000); return nextPop(); } // wait while the results are up
+    if ($('#reveal') || $('#tut')) { await wait(2000); return nextPop(); } // wait while the results or the demo are up
     const id = T.queue.shift();
     if (!id) { T.showing = false; return; }
     const f = T.d.finds.find((x) => x.id === id);
@@ -455,6 +477,9 @@
         o.connect(g).connect(out); o.start(t); o.stop(t + 1);
         [1047, 1319, 1568, 2093].forEach((f, i) => tone(f, t + i * 0.03, 2.2, 'sine', 0.06));
       },
+      // Soft tick for a finger tap in the demo, and a camera shutter.
+      tap() { if (!ready()) return; tone(1400, ctx.currentTime, 0.06, 'sine', 0.05); },
+      shutter() { if (!ready()) return; const t = ctx.currentTime; noise(t, 0.05, 0.22, 'highpass', 1800); noise(t + 0.08, 0.07, 0.16, 'bandpass', 1200); },
       fanfare() {
         if (!ready()) return;
         const t = ctx.currentTime + 0.05;
@@ -474,8 +499,138 @@
   }
   ['click', 'keydown', 'touchstart'].forEach((ev) => document.addEventListener(ev, () => Sound.unlock(), { passive: true }));
 
+  // ---------- "How to play" demo for the TV (the admin starts it; T plays it here too) ----------
+  async function playTutorial() {
+    stopTutorial(true);
+    const run = T.tutRun = {};
+    const alive = () => T.tutRun === run;
+    const later = (ms, fn) => setTimeout(() => { if (alive()) fn(); }, ms);
+    document.querySelectorAll('.pop-back').forEach((x) => x.remove());
+    const d = T.d;
+    const teams = d.teams.length ? d.teams : [{ name: 'Red', color: '#ee352e', members: [] }, { name: 'Blue', color: '#0039a6', members: [] }];
+    const t0 = teams[0], t1 = teams[1] || teams[0];
+    const names = [...new Set(teams.flatMap((t) => t.members))];
+    const sample = (names.length >= 3 ? names : [...names, 'Grandma', 'Mike', 'Ava', 'Leo'].filter((n, i, a) => a.indexOf(n) === i)).slice(0, 4);
+    const me = sample[0];
+    const pics = d.photos.slice(0, 6);
+    const ptsFor = (lvl) => d.photos.find((p) => p.difficulty === lvl)?.points ?? lvl;
+    const thumb = (i) => pics[i] ? `<img src="${esc(pics[i].thumb)}" alt="">` : `<div class="tp-fake" style="background:hsl(${i * 50 + 20} 45% 55%)"></div>`;
+    const big = pics[1] ? `<img class="tp-big" src="${esc(pics[1].image)}" alt="">` : '<div class="tp-big tp-fake" style="background:hsl(70 45% 55%)"></div>';
+    const qr = (() => { const q = qrcode(0, 'M'); q.addData(location.origin + '/'); q.make(); return q.createSvgTag({ cellSize: 6, margin: 2, scalable: true }); })();
+    const diffTag = (lvl) => `<span class="tp-diff d${lvl}">${'EMH'[lvl - 1]}</span>`;
+
+    const el = document.createElement('div');
+    el.id = 'tut'; el.className = 'tut';
+    el.innerHTML = `<div class="tut-stage">
+        <div class="tut-text"><div class="tut-step" id="tutStep"></div><h1 id="tutTitle"></h1><p id="tutSub"></p></div>
+        <div class="tut-phone"><div class="tut-notch"></div><div class="tut-screen" id="tutScreen"></div></div>
+        <div class="tut-side" id="tutSide"></div>
+      </div>
+      <div class="tut-dots" id="tutDots"></div>
+      <button class="tut-skip" id="tutSkip">Skip ✕</button>`;
+    document.body.appendChild(el);
+    $('#tutSkip').onclick = () => stopTutorial();
+    const scr = () => $('#tutScreen');
+    // A finger tap on something inside the phone.
+    const tap = (sel) => {
+      const s = scr(), target = s?.querySelector(sel); if (!target) return;
+      const a = s.getBoundingClientRect(), b = target.getBoundingClientRect();
+      const f = document.createElement('span'); f.className = 'tut-tap';
+      f.style.left = (b.left - a.left + b.width / 2) + 'px'; f.style.top = (b.top - a.top + b.height / 2) + 'px';
+      s.appendChild(f); target.classList.add('pressed'); Sound.tap();
+      setTimeout(() => { f.remove(); target.classList.remove('pressed'); }, 900);
+    };
+    const type = (sel, text, ms) => { let i = 0; const iv = setInterval(() => { const e = scr()?.querySelector(sel); if (!alive() || !e || i >= text.length) { clearInterval(iv); return; } e.textContent = text.slice(0, ++i); }, ms); };
+    const show = (html) => { const s = scr(); if (s) s.innerHTML = html; };
+    const head = (sent) => `<div class="tp-head"><span class="tp-dot" style="background:${esc(t0.color)}">${esc(t0.name[0])}</span>${esc(t0.name)} team<span class="grow"></span>${sent}</div>`;
+
+    const scenes = [
+      { title: 'Scan the code with your phone', sub: 'Open your camera, point it at the code, and tap the link. Then type your first name and pick your team.', dur: 9000,
+        side: `<div class="tut-qr">${qr}<p>${esc(location.host)}</p></div>`,
+        screen: `<div class="tp-pad"><div class="tp-turkey">🦃</div><div class="tp-h">${esc(d.game.name)}</div><div class="tp-label">Your first name</div><div class="tp-input"><span id="tpName"></span><i class="tp-caret"></i></div><div class="tp-btn" id="tpNext">Next</div></div>`,
+        steps: [[700, () => type('#tpName', me, 160)], [2600, () => tap('#tpNext')], [3300, () => show(`<div class="tp-pad"><div class="tp-h">Hi ${esc(me)}!</div><p class="tp-muted">Pick your team.</p>${teams.slice(0, 4).map((t, i) => `<div class="tp-team" id="tpTeam${i}" style="background:${esc(t.color)}">${esc(t.name)}</div>`).join('')}</div>`)], [5200, () => tap('#tpTeam0')],
+          [6200, () => show(`<div class="tp-pad tp-center"><div class="tp-turkey">📍</div><div class="tp-h">One more step</div><p class="tp-muted">Your phone asks to use your location. Tap <b>Allow</b>.</p><div class="tp-allow"><b>Allow location?</b><div><span>Don't Allow</span><span id="tpAllow">Allow</span></div></div></div>`)], [7800, () => tap('#tpAllow')]] },
+      { title: 'Wait in the lobby', sub: 'Your screen turns your team\'s color. You can switch teams until the host presses Start. Then everyone counts down together.', dur: 9000,
+        screen: `<div class="tp-lobby" style="background:${esc(t0.color)}"><div class="tp-badge" style="color:${esc(t0.color)}">${esc(t0.name[0])}</div><p>You're <b>${esc(me)}</b> on the <b>${esc(t0.name)}</b> team</p><div class="tp-h">Waiting for other players to join</div><div class="tp-chips" id="tpChips"></div></div>`,
+        steps: [...sample.map((n, i) => [600 + i * 900, () => { const c = scr()?.querySelector('#tpChips'); if (c) { c.insertAdjacentHTML('beforeend', `<span class="tp-chip">${esc(n)}</span>`); Sound.tap(); } }]),
+          ...[3, 2, 1].map((n, i) => [5000 + i * 900, () => { show(`<div class="tp-lobby tp-center" style="background:${esc(t0.color)}"><p>Get ready!</p><div class="tp-cd">${n}</div></div>`); Sound.ding(n === 1 ? 3 : 1); }]),
+          [7700, () => { show(`<div class="tp-lobby tp-center" style="background:${esc(t0.color)}"><div class="tp-cd go">GO!</div><p>Happy hunting 🦃</p></div>`); Sound.ding(3); }]] },
+      { title: 'Pick a photo to find', sub: `Each photo shows a spot in the neighborhood. Easy ones are worth ${ptsFor(1)} point${ptsFor(1) === 1 ? '' : 's'}, hard ones ${ptsFor(3)}.`, dur: 8000,
+        screen: `${head('0 sent')}<div class="tp-grid">${[0, 1, 2, 3, 4, 5].map((i) => `<div class="tp-tile" id="tpTile${i}">${thumb(i)}<span class="tp-n">#${i + 1}</span>${diffTag(pics[i]?.difficulty || (i % 3) + 1)}</div>`).join('')}</div>`,
+        side: `<div class="tut-pts">${[1, 2, 3].map((l) => `<div class="tut-pt d${l}"><span>${'EMH'[l - 1]}</span><b>${['Easy', 'Medium', 'Hard'][l - 1]}</b><em>${ptsFor(l)} pt${ptsFor(l) === 1 ? '' : 's'}</em></div>`).join('')}</div>`,
+        steps: [[2800, () => tap('#tpTile1')], [3600, () => show(`${head('0 sent')}<div class="tp-pad">${big}<div class="tp-h" style="margin-top:.4em">#2</div><p class="tp-muted">Pinch to zoom in on the details.</p><div class="tp-btn orange">📸 I found it! Take the picture</div></div>`)]] },
+      { title: 'Walk there with your team', sub: 'The map shows the path you\'ve walked and where your teammates are. Stay together!', dur: 8500,
+        screen: `${head('0 sent')}<div class="tp-map"><svg viewBox="0 0 200 330" preserveAspectRatio="xMidYMid slice">
+          <rect width="200" height="330" fill="#ecebe4"/><rect x="112" y="18" width="70" height="70" rx="4" fill="#cfe3c4"/>
+          ${[40, 100, 160].map((x) => `<line x1="${x}" y1="0" x2="${x}" y2="330" stroke="#fff" stroke-width="9"/>`).join('')}${[60, 140, 220, 300].map((y) => `<line x1="0" y1="${y}" x2="200" y2="${y}" stroke="#fff" stroke-width="9"/>`).join('')}
+          <line x1="0" y1="330" x2="200" y2="0" stroke="#fff" stroke-width="7"/>
+          <path id="tpPath" d="M40 315 L40 220 L100 220 L100 140 L160 140 L160 96" fill="none" stroke="${esc(t0.color)}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" opacity=".7"/>
+          <g transform="translate(160 84)"><path d="M0 12 C-9 0 -9 -12 0 -12 C9 -12 9 0 0 12Z" fill="#e8590c"/><text y="-2" text-anchor="middle" font-size="9" font-weight="700" fill="#fff">2</text></g>
+          <circle id="tpMate" r="6" fill="${esc(t0.color)}" stroke="#fff" stroke-width="2.5" opacity=".75"/><circle id="tpMe" r="7.5" fill="#1a73e8" stroke="#fff" stroke-width="3"/>
+          <text id="tpMateName" font-size="9" font-weight="700" fill="#333" text-anchor="middle">${esc(sample[1] || 'Mike')}</text>
+        </svg></div>`,
+        steps: [[200, () => {
+          const path = scr()?.querySelector('#tpPath'); if (!path) return;
+          const len = path.getTotalLength(); path.style.strokeDasharray = len; path.style.strokeDashoffset = len;
+          const t1s = performance.now(), D = 6500;
+          (function step(now) {
+            if (!alive() || !path.isConnected) return;
+            const k = Math.min(1, (now - t1s) / D), ease = k < .5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+            path.style.strokeDashoffset = len * (1 - ease);
+            const p = path.getPointAtLength(len * ease), q = path.getPointAtLength(Math.max(0, len * ease - 22));
+            const meDot = scr().querySelector('#tpMe'), mate = scr().querySelector('#tpMate'), mn = scr().querySelector('#tpMateName');
+            meDot.setAttribute('cx', p.x); meDot.setAttribute('cy', p.y); mate.setAttribute('cx', q.x - 9); mate.setAttribute('cy', q.y + 4);
+            mn.setAttribute('x', q.x - 9); mn.setAttribute('y', q.y - 6);
+            if (k < 1) setTimeout(() => step(performance.now()), 33); else Sound.chime();
+          })(t1s);
+        }]] },
+      { title: 'Stand where the photo was taken', sub: 'Tap "I found it!" and take a picture. Your location is sent with it, so get right to the spot.', dur: 9000,
+        screen: `${head('0 sent')}<div class="tp-pad">${big}<div class="tp-h" style="margin-top:.4em">#2</div><div class="tp-btn orange" id="tpFound">📸 I found it! Take the picture</div></div>`,
+        steps: [[1500, () => tap('#tpFound')], [2300, () => show(`<div class="tp-cam">${big}<i class="c1"></i><i class="c2"></i><i class="c3"></i><i class="c4"></i><div class="tp-shutter" id="tpShutter"></div></div>`)],
+          [4000, () => { tap('#tpShutter'); Sound.shutter(); scr()?.insertAdjacentHTML('beforeend', '<div class="tp-flash"></div>'); }],
+          [4900, () => { show(`${head('1 sent')}<div class="tp-pad tp-center"><div class="tp-locating"></div><div class="tp-h">Getting your location…</div></div>`); }],
+          [6300, () => { show(`${head('1 sent')}<div class="tp-pad tp-center tp-done"><div class="tp-turkey">📸</div><div class="tp-h big">Sent!</div><p class="tp-muted">Your picture and location are in. You'll find out what counted at the end.</p></div>`); Sound.chime(); }]] },
+      { title: 'Results stay secret!', sub: 'Your phone only says "Sent." The TV shows when a team finds something. Not sure you got it right? Tap "Submit again." Only the newest one counts.', dur: 9500,
+        screen: `${head('2 sent')}<div class="tp-grid">${[1, 4].map((i) => `<div class="tp-tile">${thumb(i)}<span class="tp-n">#${i + 1}</span><span class="tp-sent">✓ ${esc(me)}</span></div>`).join('')}</div><div class="tp-toast" id="tpToast"><i style="background:${esc(t1.color)}"></i><span><b>${esc(t1.name)} team</b> found something!</span></div>`,
+        side: `<div class="tut-tvpop" id="tpTv"><div class="h" style="background:${esc(t1.color)}">📸 New photo from the ${esc(t1.name)} team</div><div class="b">${thumb(3)}${thumb(2)}</div><div class="v">Results at the end! 🤫</div></div>`,
+        steps: [[2200, () => { scr()?.querySelector('#tpToast')?.classList.add('on'); $('#tpTv')?.classList.add('on'); Sound.chime(); }]] },
+      { title: 'Come back when time is up', sub: 'Head back to home base. The winners are revealed right here on the TV, photo by photo!', dur: 9000,
+        screen: `<div class="tp-over tp-center"><div class="tp-turkey">🏁</div><div class="tp-h big">Game over!</div><p>See the results on the main screen.</p></div>`,
+        side: `<div class="tut-win"><div class="tut-trophy">🏆</div>${teams.slice(0, 4).map((t, i) => `<div class="tut-wteam" style="background:${esc(t.color)};animation-delay:${1 + i * .5}s">${esc(t.name)}</div>`).join('')}<p>And the winner is…</p></div>`,
+        steps: [[3500, () => { Sound.fanfare(); confetti(); }]] },
+    ];
+
+    $('#tutDots').innerHTML = scenes.map(() => '<i></i>').join('');
+    for (let i = 0; i < scenes.length; i++) {
+      if (!alive()) return;
+      const sc = scenes[i];
+      $('#tutStep').textContent = `Step ${i + 1} of ${scenes.length}`;
+      $('#tutTitle').textContent = sc.title; $('#tutSub').textContent = sc.sub;
+      el.querySelector('.tut-text').classList.remove('in'); void el.offsetWidth; el.querySelector('.tut-text').classList.add('in');
+      $('#tutSide').innerHTML = sc.side || '';
+      show(sc.screen);
+      el.querySelectorAll('#tutDots i').forEach((dot, j) => { dot.className = j < i ? 'done' : j === i ? 'on' : ''; dot.style.setProperty('--dur', sc.dur + 'ms'); });
+      if (i) Sound.whoosh();
+      (sc.steps || []).forEach(([ms, fn]) => later(ms, fn));
+      await wait(sc.dur);
+    }
+    if (!alive()) return;
+    el.querySelector('.tut-stage').innerHTML = `<div class="tut-end"><div style="font-size:5em">🦃</div><h1>Happy hunting!</h1><p>Scan the code to join.</p></div>`;
+    $('#tutDots').innerHTML = '';
+    Sound.crash();
+    await wait(4000);
+    if (alive()) stopTutorial();
+  }
+  function stopTutorial(instant) {
+    T.tutRun = null;
+    const e = $('#tut'); if (!e) return;
+    if (instant) { e.remove(); return; }
+    e.classList.add('out'); setTimeout(() => e.remove(), 500);
+  }
+
   // ---------- final reveal: count up every photo, Easy → Medium → Hard, then the winner ----------
   async function showReveal() {
+    stopTutorial(true);
     $('#reveal')?.remove();
     document.querySelectorAll('.pop-back').forEach((x) => x.remove());
     const d = T.d;
@@ -622,7 +777,8 @@
     if (k === 'f') fullscreen();
     if (k === 'h') { setOpt('noSpoilers', !opt('noSpoilers')); applySettings(); $('#settings')?.remove(); }
     if (k === 'r' && T.d.game?.revealed) showReveal();
-    if (k === 'escape') { $('#settings')?.remove(); document.querySelectorAll('.pop-back').forEach((x) => x.remove()); }
+    if (k === 't') { if ($('#tut')) stopTutorial(); else playTutorial(); }
+    if (k === 'escape') { stopTutorial(); $('#settings')?.remove(); document.querySelectorAll('.pop-back').forEach((x) => x.remove()); }
   });
 
   wake();
