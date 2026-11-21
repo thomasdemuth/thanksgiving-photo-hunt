@@ -289,6 +289,8 @@
       ev.preventDefault();
       const name = $('#name').value.trim();
       if (!name) return;
+      // Typing "admin" (any case or spacing) opens the admin sign-in instead of joining.
+      if (/^(admin|administrator)$/.test(name.toLowerCase().replace(/[^a-z]/g, ''))) { location.href = '/admin'; return; }
       try {
         const { matches } = await api('/api/lookup', { name });
         if (matches.length) askIsThisYou(name, matches, info); else if (info.game.random_teams) finishJoin({ name }); else pickTeam(name, info);
