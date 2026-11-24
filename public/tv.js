@@ -44,17 +44,17 @@
   function boot() {
     $('#app').innerHTML = `
       <div class="tv-shell">
-        <header class="tv-top">
-          <span class="tv-title" id="title">🦃 Photo Hunt</span>
-          <span class="tv-status" id="status"></span>
-          <span class="tv-clock" id="clock"></span>
-        </header>
-        <div class="tv-main">
-          <div class="tv-map-wrap"><div id="tvMap"></div><div id="cornerQr"></div><div id="over"></div></div>
+        <div class="tv-map-wrap"><div id="tvMap"></div><div id="cornerQr"></div><div id="over"></div></div>
+        <div class="tv-side">
+          <header class="tv-top">
+            <span class="tv-title" id="title">🦃 Photo Hunt</span>
+            <span class="tv-clock" id="clock"></span>
+            <span class="tv-status" id="status"></span>
+          </header>
           <div class="tv-teams" id="teams"></div>
         </div>
       </div>`;
-    T.map = L.map('tvMap', { zoomControl: false, zoomSnap: 0.25 }).setView([40.728, -74.005], 15);
+    T.map = L.map('tvMap', { zoomControl: false, zoomSnap: 0.1 }).setView([40.728, -74.005], 15);
     addBaseMap(T.map);
     T.L = { area: L.layerGroup().addTo(T.map), spots: L.layerGroup().addTo(T.map), trails: L.layerGroup().addTo(T.map), players: L.layerGroup().addTo(T.map) };
     T.markers = {}; T.trails = {}; T.sig = {};
@@ -213,7 +213,7 @@
       // Random teams not revealed yet: everyone in one list, no teams.
       if (d.game.random_teams && !d.game.teams_ready) {
         const names = d.players.map((p) => p.name);
-        const html = `<div class="tcol pre">
+        const html = `<div class="tcol pre solo">
             <div class="thead" style="background:#5b4636"><div class="row1"><span class="nm">🎲 Who's playing</span></div><div class="sub">${names.length} here · teams will be picked at random</div></div>
             <div class="tnames grid ${names.length > 18 ? 'many' : ''}">${names.length ? names.map((n) => `<div class="pname ${T.knownNames.has('all' + n) ? '' : 'new'}" style="--c:#e8590c">${esc(n)}</div>`).join('') : '<div class="tempty">Waiting for players…</div>'}</div>
           </div>`;
@@ -231,7 +231,7 @@
       if (justShown) { Sound.whoosh(); setTimeout(() => Sound.fanfare(), 300); T.namesPrimed = false; }
       const html = order.map((t) => `<div class="tcol pre">
           <div class="thead" style="background:${esc(t.color)}"><div class="row1"><span class="nm">${esc(t.name)}</span></div></div>
-          <div class="tnames ${t.members.length > 7 ? 'many' : ''}">${t.members.length ? t.members.map((n) => `<div class="pname ${T.knownNames.has(t.id + n) ? '' : 'new'}" style="--c:${esc(t.color)}">${esc(n)}</div>`).join('')
+          <div class="tnames ${t.members.length > 6 ? 'many' : ''}">${t.members.length ? t.members.map((n) => `<div class="pname ${T.knownNames.has(t.id + n) ? '' : 'new'}" style="--c:${esc(t.color)}">${esc(n)}</div>`).join('')
             : '<div class="tempty">Waiting for players…</div>'}</div>
         </div>`).join('');
       if (changed('teams', html.replace(/ new"/g, '"'))) {
@@ -281,7 +281,8 @@
     const b = T.d?.game?.boundary, h = T.d?.game?.home;
     if (!T.map || !b) return;
     T.map.invalidateSize();
-    T.map.fitBounds(h ? [...b, [h.lat, h.lng]] : b, { padding: [24, 24], animate: false });
+    // Tight fit so the streets are as big as possible; the map is the whole left side of the TV.
+    T.map.fitBounds(h ? [...b, [h.lat, h.lng]] : b, { padding: [10, 10], animate: false });
   }
 
   // Optional layer: every hunt spot, numbered and colored by difficulty (green Easy, yellow Medium, red Hard).

@@ -1,22 +1,25 @@
-/* TV view for home base. Calm and easy to read from the couch: a map, one column per team, and a pop-up for each new photo. */
+/* TV view for home base. Calm and easy to read from the couch: a big map on the left, one row per team on the right, and a pop-up for each new photo. */
 html, body { height: 100%; overflow: hidden; }
 body.tv-page { background: #f7f5f0; color: var(--ink); font: 400 clamp(14px, 1.1vw, 38px)/1.3 var(--font); }
 body.tv-page.idle, body.tv-page.idle * { cursor: none !important; }
-.tv-shell { display: grid; grid-template-rows: auto 1fr; height: 100vh; }
+/* Map on the left (full height, 40%), title bar and teams on the right */
+.tv-shell { display: grid; grid-template-columns: 40% 60%; height: 100vh; }
+.tv-side { display: grid; grid-template-rows: auto 1fr; min-height: 0; min-width: 0; }
 
-/* Top bar */
-.tv-top { display: flex; align-items: center; gap: 1em; background: var(--ink); color: var(--white); padding: .5em 1.2em; border-bottom: .3em solid var(--orange); }
-.tv-title { font-weight: 700; font-size: 1.6em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tv-status { font-size: 1.1em; color: #ccc; white-space: nowrap; }
-.tv-clock { margin-left: auto; font-weight: 700; font-size: 2em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Title bar (right side only): name and clock on top, how many are out hunting underneath */
+.tv-top { display: grid; grid-template-columns: 1fr auto; align-items: baseline; column-gap: .8em; background: var(--ink); color: var(--white); padding: .5em 1em .55em; border-bottom: .3em solid var(--orange); }
+.tv-title { font-weight: 700; font-size: 1.6em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.tv-status { grid-column: 1 / -1; font-size: 1.05em; color: #ccc; white-space: nowrap; }
+.tv-status:empty { display: none; }
+.tv-clock { font-weight: 700; font-size: 2em; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
-/* Main: map + team columns */
-.tv-main { display: grid; grid-template-columns: 40% 1fr; min-height: 0; }
-.tv-map-wrap { position: relative; min-height: 0; overflow: hidden; border-right: 1px solid var(--line); }
+.tv-map-wrap { position: relative; min-height: 0; overflow: hidden; border-right: .3em solid var(--orange); }
 #tvMap { position: absolute; inset: 0; background: #ddd; }
-.tv-teams { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: .8em; padding: .8em; min-height: 0; }
-.tcol { display: flex; flex-direction: column; min-height: 0; background: var(--white); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
-.thead { color: var(--white); padding: .6em .8em .7em; }
+
+/* One row per team, stacked: team on the left, its photos running along the row (newest first) */
+.tv-teams { display: grid; grid-auto-rows: minmax(0, 1fr); gap: .6em; padding: .6em; min-height: 0; }
+.tcol { display: flex; min-height: 0; background: var(--white); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; container-type: size; }
+.thead { color: var(--white); padding: .5em .8em .6em; width: 11.5em; flex: none; display: flex; flex-direction: column; justify-content: center; overflow: hidden; }
 .thead .row1 { display: flex; align-items: baseline; justify-content: space-between; gap: .5em; }
 .thead .nm { font-weight: 700; font-size: 1.6em; line-height: 1.1; }
 .thead .place { font-weight: 700; font-size: .9em; background: rgba(0,0,0,.25); padding: .05em .5em; border-radius: 4px; white-space: nowrap; }
@@ -24,17 +27,20 @@ body.tv-page.idle, body.tv-page.idle * { cursor: none !important; }
 .thead .big small { font-size: .38em; font-weight: 400; margin-left: .25em; }
 .thead .sub { font-size: .9em; opacity: .9; }
 .thead .who { font-size: .8em; opacity: .85; margin-top: .25em; }
-.tgrid { flex: 1; min-height: 0; overflow: hidden; display: grid; grid-template-columns: repeat(auto-fill, minmax(6.4em, 1fr)); grid-auto-rows: max-content; gap: .5em; padding: .6em; align-content: start; }
-.tt { position: relative; border-radius: 4px; overflow: hidden; background: #eee; border: 3px solid transparent; }
-.tt img { width: 100%; aspect-ratio: 4/3; object-fit: cover; display: block; background: #ddd; }
+.tgrid { flex: 1; min-width: 0; overflow: hidden; display: flex; gap: .5em; padding: .5em; align-content: flex-start; }
+/* Pictures fill the row's height exactly: one line in a short row, two lines when the row is tall.
+   --th is a tile's full height; the picture takes what the caption leaves, at 4:3. */
+.tt { --th: calc(100cqh - 2px - 1em); position: relative; flex: none; height: var(--th); width: min(12em, calc((var(--th) - 1.3em - 6px) * 4 / 3)); display: flex; flex-direction: column; border-radius: 4px; overflow: hidden; background: #eee; border: 3px solid transparent; box-sizing: border-box; }
+.tt img { flex: 1; min-height: 0; width: 100%; object-fit: cover; display: block; background: #ddd; }
+@container (min-height: 11em) { .tgrid { flex-wrap: wrap; } .tt { --th: calc((100cqh - 2px - 1.5em) / 2); } }
 .tt .n { position: absolute; top: .25em; left: .25em; background: var(--ink); color: var(--white); font-weight: 700; font-size: .8em; padding: .05em .4em; border-radius: 3px; }
 .tt .cap { font-size: .75em; font-weight: 700; padding: .2em .35em; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: #eee; }
 .tt.yes { border-color: var(--green); } .tt.yes .cap { background: var(--green); color: var(--white); }
 .tt.no { border-color: var(--red); } .tt.no .cap { background: var(--red); color: var(--white); }
 .tt.wait { border-color: var(--yellow); } .tt.wait .cap { background: var(--yellow); }
 .tt.fresh { animation: fresh 2.5s ease-out; }
-.tempty { color: var(--muted); padding: 1em .8em; grid-column: 1 / -1; }
-.tmore { grid-column: 1 / -1; text-align: center; color: var(--muted); font-size: .85em; }
+.tempty { color: var(--muted); padding: .6em .4em; align-self: center; font-size: 1.1em; }
+.tmore { flex: none; align-self: center; color: var(--muted); font-size: .9em; }
 @keyframes fresh { 0%, 30% { box-shadow: 0 0 0 .4em var(--orange); } 100% { box-shadow: 0 0 0 0 transparent; } }
 
 /* Map markers */
@@ -98,7 +104,7 @@ body.tv-page.idle, body.tv-page.idle * { cursor: none !important; }
 @keyframes flip { from { transform: rotateY(70deg) scale(.8); opacity: 0; } to { transform: none; opacity: 1; } }
 @keyframes plus { from { transform: scale(1.9); } to { transform: none; } }
 @keyframes glow { to { box-shadow: 0 0 0 .2em #fff, 0 0 4em var(--c); } }
-.sound-hint { position: fixed; left: 1em; bottom: 1em; z-index: 3500; background: var(--ink); color: #fff; padding: .5em .9em; border-radius: var(--radius); font-size: .95em; }
+.sound-hint { position: fixed; left: 1em; top: 1em; z-index: 3500; background: var(--ink); color: #fff; padding: .5em .9em; border-radius: var(--radius); font-size: .95em; }
 
 .tv-login { max-width: 380px; margin: 14vh auto; }
 
@@ -147,15 +153,16 @@ body.tv-page.idle, body.tv-page.idle * { cursor: none !important; }
 .rv-wpts { font-size: 1.5em; color: #ddd; }
 @keyframes shake { from { transform: rotate(-6deg); } to { transform: rotate(6deg); } }
 
-/* Before the start: team names up top, players listed big underneath */
-.tcol.pre .thead { padding: .8em 1em; text-align: center; }
-.tcol.pre .thead .row1 { justify-content: center; }
-.tcol.pre .thead .nm { font-size: 2.2em; }
-.tnames { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: .35em; padding: .8em; }
-.pname { font-weight: 700; font-size: clamp(1.6em, 2.9vw, 3.4em); line-height: 1.15; padding: .15em .45em; border-left: .3em solid var(--c); background: #faf8f4; border-radius: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Before the start: each team's row lists everyone who has joined, big */
+.tcol.pre .thead { padding: .8em 1em; }
+.tcol.pre .thead .nm { font-size: 2em; }
+.tcol.pre.solo { flex-direction: column; }
+.tcol.pre.solo .thead { width: auto; }
+.tnames { flex: 1; min-width: 0; min-height: 0; overflow: hidden; display: flex; flex-wrap: wrap; align-content: center; gap: .4em; padding: .6em; }
+.pname { font-weight: 700; font-size: clamp(1.4em, 2vw, 3em); line-height: 1.15; padding: .15em .45em; border-left: .3em solid var(--c); background: #faf8f4; border-radius: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .pname.new { animation: namein .7s cubic-bezier(.2, 1.4, .4, 1); }
 @keyframes namein { 0% { transform: scale(.4); opacity: 0; } 60% { background: color-mix(in srgb, var(--c) 30%, #fff); } 100% { transform: none; opacity: 1; } }
-.tnames.many .pname { font-size: clamp(1.1em, 1.6vw, 2em); }
+.tnames.many .pname { font-size: clamp(1em, 1.3vw, 1.8em); }
 
 /* ---------- "How to play" demo ---------- */
 .tut { position: fixed; inset: 0; z-index: 2800; background: radial-gradient(ellipse at 50% 30%, #3a2a20, #1f1a17 70%); color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; animation: tutin .5s ease-out; }
@@ -346,5 +353,5 @@ body.tv-page.idle, body.tv-page.idle * { cursor: none !important; }
 .tv-ann-from { font-size: 1.3em; color: var(--muted); font-weight: 700; }
 .tv-ann-text { font-size: 3.6em; font-weight: 700; line-height: 1.1; overflow-wrap: anywhere; }
 @keyframes annIn { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: none; } }
-.tnames.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(13em, 1fr)); align-content: start; }
+.tnames.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(11em, 1fr)); align-content: start; }
 .tcol.pre .thead .sub { font-size: 1.3em; opacity: .9; margin-top: .2em; }
