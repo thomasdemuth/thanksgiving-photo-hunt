@@ -630,6 +630,8 @@ async function admin(request, env, url, who) {
     return json({ ok: true, id: g.id });
   }
 
+  if (parts[0] === 'sets') return photoSets(request, env, parts, method);
+
   const game = await currentGame(env);
   if (!game) return json({ game: null });
 
@@ -894,6 +896,96 @@ async function admin(request, env, url, who) {
     const csv = ['time,team,player,photo,points,status,distance_m',
       ...rows.results.map((r) => [new Date(r.created_at).toISOString(), r.team, r.player, r.title, r.points, r.status, r.distance_m].map(esc).join(','))].join('\n');
     return new Response(csv, { headers: { 'content-type': 'text/csv', 'content-disposition': 'attachment; filename="photo-hunt-results.csv"' } });
+  }
+
+  return json({ error: 'Not found' }, 404);
+}
+
+// ---------- photo sets ----------
+// Saved hunt content (photos, play area, home base) the host can load into a game, e.g. one set per round.
+// Sets copy only the image keys, so a picture in KV may be shared by games and sets: never delete it here.
+const SET_COLS = 'title, difficulty, points, lat, lng, radius_m, hint, image_key, thumb_key, sort';
+
+async function photoSets(request, env, parts, method) {
+  const sid = parts[1] ? decodeURIComponent(parts[1]) : null;
+  const body = method === 'GET' || method === 'DELETE' ? {} : await request.json().catch(() => ({}));
+  const cleanName = String(body.name ?? '').trim().slice(0, 60);
+  const nameTaken = async (exceptId) => env.DB.prepare('SELECT 1 FROM photo_sets WHERE lower(name) = lower(?) AND id != ?').bind(cleanName, exceptId || '').first();
+
+  if (method === 'GET' && !sid) {
+    const rows = (await env.DB.prepare(`SELECT s.id, s.name, s.created_at, s.updated_at,
+        (SELECT COUNT(*) FROM photo_set_items i WHERE i.set_id = s.id) AS photos,
+        s.boundary_geojson IS NOT NULL AS has_area, s.home_lat IS NOT NULL AS has_home, s.home_label
+      FROM photo_sets s ORDER BY lower(s.name), s.created_at`).all()).results;
+    return json({ sets: rows });
+  }
+
+  const set = sid ? await env.DB.prepare('SELECT * FROM photo_sets WHERE id = ?').bind(sid).first() : null;
+  if (sid && !set) return json({ error: 'That photo set is gone. Refresh the page.' }, 404);
+
+  if (method === 'PATCH' && set && !parts[2]) {
+    if (!cleanName) return json({ error: 'Give the set a name.' }, 400);
+    if (await nameTaken(set.id)) return json({ error: `There's already a set called "${cleanName}".` }, 400);
+    await env.DB.prepare('UPDATE photo_sets SET name = ? WHERE id = ?').bind(cleanName, set.id).run();
+    return json({ ok: true });
+  }
+
+  if (method === 'DELETE' && set && !parts[2]) {
+    await env.DB.batch([
+      env.DB.prepare('DELETE FROM photo_set_items WHERE set_id = ?').bind(set.id),
+      env.DB.prepare('DELETE FROM photo_sets WHERE id = ?').bind(set.id),
+    ]);
+    return json({ ok: true });
+  }
+
+  // Everything below needs the current game.
+  const game = await currentGame(env);
+  if (!game) return json({ error: 'Create a game first.' }, 400);
+  const copyIn = (setId) => env.DB.prepare(`INSERT INTO photo_set_items (id, set_id, ${SET_COLS})
+    SELECT lower(hex(randomblob(8))), ?, ${SET_COLS} FROM photos WHERE game_id = ?`).bind(setId, game.id);
+  const count = async () => (await env.DB.prepare('SELECT COUNT(*) AS n FROM photos WHERE game_id = ?').bind(game.id).first()).n;
+
+  // Save the game's photos, play area and home base as a new set.
+  if (method === 'POST' && !sid) {
+    if (!cleanName) return json({ error: 'Give the set a name.' }, 400);
+    if (await nameTaken()) return json({ error: `There's already a set called "${cleanName}". Use Update on it to save over it.` }, 400);
+    const n = await count();
+    if (!n) return json({ error: 'This game has no photos yet, so there is nothing to save.' }, 400);
+    const newId = id();
+    await env.DB.batch([
+      env.DB.prepare('INSERT INTO photo_sets (id, name, created_at, updated_at, boundary_geojson, home_lat, home_lng, home_label) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .bind(newId, cleanName, now(), now(), game.boundary_geojson ?? null, game.home_lat ?? null, game.home_lng ?? null, game.home_label ?? null),
+      copyIn(newId),
+    ]);
+    return json({ ok: true, id: newId, photos: n });
+  }
+
+  // Overwrite a set with what's in the game now.
+  if (method === 'PUT' && set && !parts[2]) {
+    const n = await count();
+    if (!n) return json({ error: 'This game has no photos, so the set was left as it was.' }, 400);
+    await env.DB.batch([
+      env.DB.prepare('DELETE FROM photo_set_items WHERE set_id = ?').bind(set.id),
+      copyIn(set.id),
+      env.DB.prepare('UPDATE photo_sets SET boundary_geojson = ?, home_lat = ?, home_lng = ?, home_label = ?, updated_at = ? WHERE id = ?')
+        .bind(game.boundary_geojson ?? null, game.home_lat ?? null, game.home_lng ?? null, game.home_label ?? null, now(), set.id),
+    ]);
+    return json({ ok: true, photos: n });
+  }
+
+  // Replace the game's photos, play area and home base with the set's. Finds point at the old photos, so they go too.
+  if (method === 'POST' && set && parts[2] === 'load') {
+    if (effectiveStatus(game) !== 'setup') return json({ error: 'You can only load a photo set before the game starts. Reset the game on the Live tab first.' }, 400);
+    await env.DB.batch([
+      env.DB.prepare('DELETE FROM finds WHERE game_id = ?').bind(game.id),
+      env.DB.prepare('DELETE FROM photos WHERE game_id = ?').bind(game.id),
+      env.DB.prepare(`INSERT INTO photos (id, game_id, ${SET_COLS})
+        SELECT lower(hex(randomblob(8))), ?, ${SET_COLS} FROM photo_set_items WHERE set_id = ? ORDER BY sort, rowid`).bind(game.id, set.id),
+      env.DB.prepare('UPDATE games SET boundary_geojson = ?, home_lat = ?, home_lng = ?, home_label = ? WHERE id = ?')
+        .bind(set.boundary_geojson ?? null, set.home_lat ?? null, set.home_lng ?? null, set.home_label ?? null, game.id),
+    ]);
+    await bump(env, game.id);
+    return json({ ok: true, photos: await count() });
   }
 
   return json({ error: 'Not found' }, 404);
