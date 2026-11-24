@@ -610,6 +610,11 @@
       <div class="tp-key"><div><i style="background:#1a73e8"></i>You + your trail</div><div><i style="background:${esc(t0.color)}"></i>Teammates</div><div><i style="background:#00933c"></i>Sent</div></div>
       <div class="tp-mapbtns"><span>Whole area</span><span class="on" id="tpShowMe">Show me</span></div></div>${tabs('map')}`;
     const sentTiles = `<div class="tp-grid">${[1, 3].map((i) => { const p = d.photos[i]; return `<div class="tp-tile" id="tpP${i}">${p ? `<img class="tp-proofimg" src="${esc(p.thumb)}" alt="">` : img(null, i, 'tp-proofimg')}${img(p, i, 'tp-inset')}<span class="tp-n">#${i + 1}</span><span class="tp-sent">✓ ${esc(i === 1 ? me : mateName)}</span></div>`; }).join('')}</div>`;
+    // The phone's "?" guide: cards with Next / Back and Skip. Same words as the phone's short "How to play" list.
+    const GUIDE = [['🔎', 'Pick any photo. Harder ones are worth more.'], ['🚶', 'Walk to the spot with your team.'], ['📸', 'Stand right there and take a picture.'], ['🤫', 'Results stay secret until the end.'], ['🏁', 'Come back when time is up.']];
+    const guideCard = (k) => `<div class="tp-gtop"><span class="on">1. The game</span><span>2. Using the app</span><u id="tpGotIt">Skip</u></div>
+      <div class="tp-gart">${GUIDE[k][0]}</div><p class="tp-gtext">${GUIDE[k][1]}</p>
+      <div class="tp-gdots">${GUIDE.map((_, j) => `<i class="${j === k ? 'on' : ''}"></i>`).join('')}</div><div class="tp-btn" id="tpNext">Next →</div>`;
     const SENT = [2, 3, 1];
     const roster = (t, i) => {
       const ns = t.members.length ? t.members.slice(0, 3) : sample.slice(i, i + 2), c = ns.map(() => 0);
@@ -630,7 +635,7 @@
           ...[3, 2, 1].map((n, i) => [5000 + i * 900, () => { show(`<div class="tp-lobby tp-center" style="background:${esc(t0.color)}"><p>Get ready!</p><div class="tp-cd">${n}</div></div>`); Sound.ding(n === 1 ? 3 : 1); }]),
           [7700, () => { show(`<div class="tp-lobby tp-center" style="background:${esc(t0.color)}"><div class="tp-cd go">GO!</div><p>Happy hunting 🦃</p></div>`); Sound.ding(3); }]] },
 
-      { title: 'The Photos tab', sub: 'Every photo to find is here. The buttons on top show just the Easy, Medium or Hard ones, so you can pick what to go after.', dur: 10000,
+      { title: 'The Photos tab', sub: 'Every photo to find is here. Tap Easy, Medium or Hard to see only those, and pick what to go after.', dur: 10000,
         screen: photosTab(0, first),
         side: `<div class="tut-callouts"><div><b>To find / Sent</b> switches between photos you still need and ones your team sent</div><div><b>E · M · H</b> shows one difficulty at a time</div></div>`,
         steps: [[2000, () => tap('#tpChip1')], [2350, () => show(photosTab(1, byDiff(1)))], [4400, () => tap('#tpChip3')], [4750, () => show(photosTab(3, byDiff(3)))], [6800, () => tap('#tpChip0')], [7150, () => show(photosTab(0, first))]] },
@@ -644,22 +649,22 @@
         screen: photosTab(0, first),
         steps: [[1300, () => tap('#tpTile1')], [1700, () => show(detail())], [3600, () => scr()?.querySelector('.zoomable')?.classList.add('zoomed')], [6400, () => scr()?.querySelector('.zoomable')?.classList.remove('zoomed')]] },
 
-      { title: 'The Map tab', sub: 'The blue line is the path you\'ve walked. Your teammates show up with their names, and ✓ pins mark photos your team already sent. "Show me" jumps to where you are.', dur: 10000,
+      { title: 'The Map tab', sub: 'The blue line is where you\'ve walked. Teammates show with their names, and ✓ marks spots your team sent. The photo spots aren\'t on the map. That\'s the hunt!', dur: 10000,
         screen: photosTab(0, first, 1),
         steps: [[700, () => tap('#tpTab-map')], [1050, () => { show(mapTab); walk(); }], [8200, () => tap('#tpShowMe')]] },
 
-      { title: 'Stand where the photo was taken', sub: 'Tap "I found it!" and take a picture. Your location is sent with it, so get right to the spot.', dur: 9000,
+      { title: 'Stand where the photo was taken', sub: 'Tap "I found it!" and take a picture. Your phone tells the game where you are, so get right to the spot. Close calls go to the host.', dur: 9000,
         screen: detail(),
         steps: [[1500, () => tap('#tpFound')], [2000, () => show(`<div class="tp-cam">${bigImg()}<i class="c1"></i><i class="c2"></i><i class="c3"></i><i class="c4"></i><div class="tp-shutter" id="tpShutter"></div></div>`)],
           [3800, () => { tap('#tpShutter'); Sound.shutter(); scr()?.insertAdjacentHTML('beforeend', '<div class="tp-flash"></div>'); }],
           [4600, () => show(`${head(1)}<div class="tp-body tp-pad2 tp-center"><div class="tp-locating"></div><div class="tp-h">Getting your location…</div></div>${tabs('photos')}`)],
           [6000, () => { show(`${head(1)}<div class="tp-body tp-pad2 tp-center tp-done"><div class="tp-turkey">📸</div><div class="tp-h big">Sent!</div><p class="tp-muted">Your picture and location are in. You'll find out what counted at the end.</p></div>${tabs('photos')}`); Sound.chime(); }]] },
 
-      { title: 'See what your team sent', sub: 'Tap "Sent" to see your team\'s pictures, with the photo you were hunting in the corner. Tap one to compare them side by side. Wrong spot? Tap "Submit again."', dur: 10000,
+      { title: 'See what your team sent', sub: 'Tap "Sent" to see your team\'s pictures, with the photo you were hunting in the corner. Tap one to compare them side by side. Wrong spot? Tap "Send it again." The newest one counts.', dur: 10000,
         screen: photosTab(0, first, 2),
         steps: [[1200, () => tap('#tpSentTab')], [1550, () => show(`${head(2)}<div class="tp-body">${seg('sent', 2)}${chips(0)}${sentTiles}</div>${tabs('photos')}`)], [3800, () => tap('#tpP1')],
           [4150, () => show(`${head(2)}<div class="tp-body tp-pad2"><div class="tp-back">← Back to photos</div><div class="tp-compare"><figure>${bigImg()}<figcaption>The photo</figcaption></figure><figure><div class="tp-proofbox">${proof()}</div><figcaption>Your team's picture · ${esc(me)}</figcaption></figure></div>
-            <div class="tp-ok">✓ Sent by ${esc(me)}. You'll find out if it counted at the end.</div><div class="tp-btn ghost" id="tpAgain">Wrong spot? Submit again</div></div>${tabs('photos')}`)],
+            <div class="tp-ok">✓ Sent by ${esc(me)}. You'll find out if it counted at the end.</div><div class="tp-btn ghost" id="tpAgain">Wrong spot? Send it again</div></div>${tabs('photos')}`)],
           [7800, () => tap('#tpAgain')]] },
 
       { title: 'Results stay secret!', sub: 'Nobody sees what counted until the end, not even your team. Your phone and the TV show when another team finds something.', dur: 8500,
@@ -672,9 +677,10 @@
         steps: [[1000, () => tap('#tpTab-scores')], [1350, () => show(`${head(2)}<div class="tp-body tp-pad2"><div class="tp-note">🤫 <b>Points are secret until the end.</b> For now you can see how many photos everyone has sent.</div>
           <div class="tp-card"><b>Photos sent</b>${teams.slice(0, 3).map((t, i) => `<div class="tp-srow"><span class="tp-dot" style="background:${esc(t.color)}">${esc(t.name[0])}</span><div class="grow"><b>${esc(t.name)}</b><div class="tp-roster">${roster(t, i)}</div></div><span class="tp-big-n">${SENT[i]}<small>sent</small></span></div>`).join('')}</div></div>${tabs('scores')}`)]] },
 
-      { title: 'Need help? Tap the ? button', sub: 'The ? at the top shows these steps any time. Aa makes the text bigger. If a red "Location is off" bar shows up, tap "Fix it" and follow the steps.', dur: 9500,
+      { title: 'Need help? Tap the ? button', sub: 'The ? at the top opens a quick guide. Swipe or tap Next to go through it. Aa makes the text bigger. If a red "Location is off" bar shows up, tap "Fix it."', dur: 9500,
         screen: photosTab(0, first, 2),
-        steps: [[1200, () => tap('#tpHelp')], [1550, () => scr()?.insertAdjacentHTML('beforeend', `<div class="tp-sheet"><div><div class="tp-h">How to play</div>${['🔎 Pick a photo', '🚶 Find the spot with your team', '📸 Stand there and take the picture', '🤫 Results stay secret', '🏁 Come back when time is up'].map((x) => `<p>${x}</p>`).join('')}<div class="tp-btn" id="tpGotIt">Got it!</div></div></div>`)],
+        steps: [[1200, () => tap('#tpHelp')], [1550, () => scr()?.insertAdjacentHTML('beforeend', `<div class="tp-sheet"><div>${guideCard(0)}</div></div>`)],
+          [2800, () => tap('#tpNext')], [3150, () => { const c = scr()?.querySelector('.tp-sheet > div'); if (c) c.innerHTML = guideCard(1); }],
           [4200, () => tap('#tpGotIt')], [4550, () => scr()?.querySelector('.tp-sheet')?.remove()], [5300, () => tap('#tpAa')], [5650, () => scr()?.classList.add('bigtext')],
           [7000, () => { scr()?.classList.remove('bigtext'); scr()?.querySelector('.tp-head')?.insertAdjacentHTML('beforeend', '<div class="tp-locbar"><span>📍 <b>Location is off.</b></span><span class="fix" id="tpFix">Fix it</span></div>'); }], [8300, () => tap('#tpFix')]] },
 

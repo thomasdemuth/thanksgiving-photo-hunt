@@ -347,7 +347,7 @@
   function showLocationAsk() {
     $('#app').innerHTML = `
       <div class="screen stack">
-        ${hero('One more step', 'The game uses your location when you submit a photo, and shows your teammates where you are. Your phone will ask. <b>Tap "Allow".</b>')}
+        ${hero('One more step', 'The game uses your location when you send a picture, and shows your teammates where you are. Your phone will ask. <b>Tap "Allow".</b>')}
         <div class="allow-mock">
           <b>Allow "${esc(location.host)}" to use your current location?</b>
           <div class="btns"><span>Don't Allow</span><span>Allow</span></div>
@@ -607,7 +607,8 @@
     const me = S.data.me, team = myTeam(), color = team?.color || (g.random_teams ? '#5b4636' : '#333');
     let html = '', sig = '';
     if (ph === 'lobby') {
-      store.set('howto-seen', true);
+      // First time here: open the how-to cards (they stay open while the lobby updates underneath).
+      if (!store.get('howto-seen') && !$('#sheet') && !$('#teamReveal')) showHowTo();
       const ls = locStatus();
       const waitTeams = g.random_teams && !team; // teams are being picked at random
       sig = JSON.stringify(['lobby', me, S.data.teams.map((x) => [x.id, x.name, x.color, x.members]), S.data.everyone, g.random_teams, g.teams_ready, S.switching, ls]);
@@ -634,11 +635,14 @@
           <h1>${waitTeams ? 'Waiting for the teams to be picked' : 'Waiting for other players to join'}</h1>
           <div class="lob-dots"><i></i><i></i><i></i></div>
         </div>
-        <div class="lob-how"><h2>How to play</h2>${howToHtml()}</div>
+        <div class="lob-how"><h2>How to play</h2>
+          <ul class="how-short">${HOW_SHORT.map(([i, t]) => `<li><span>${i}</span>${t}</li>`).join('')}</ul>
+          <button class="btn-primary btn-big" data-howto>Show me how to play</button></div>
         ${teamsHtml}
         <p class="lob-foot">The hunt starts when the host presses Start. Keep this screen open.</p>
       </div>`;
     } else if (ph === 'countdown' || ph === 'go') {
+      if ($('#sheet.tour')) $('#sheet').remove(); // the hunt is starting: put the how-to cards away so everyone sees the countdown
       const n = Math.max(1, Math.ceil((g.started_at - t) / 1000));
       sig = ph + (ph === 'go' ? '' : n) + color;
       html = ph === 'go'
@@ -659,6 +663,7 @@
     el.style.background = ph === 'over' ? '#111' : color;
     el.innerHTML = html;
     el.querySelectorAll('[data-lochelp]').forEach((b) => b.onclick = showLocHelp);
+    el.querySelectorAll('[data-howto]').forEach((b) => b.onclick = () => showHowTo());
     el.querySelectorAll('[data-switch]').forEach((b) => b.onclick = async () => {
       S.switching = true; renderScreen();
       try { await api('/api/team', { team_id: b.dataset.switch }); } catch (e) { if (!e.handled) alert(e.message); }
@@ -666,26 +671,119 @@
     });
   }
 
-  // ---------- how to play (lobby card + "?" button in the game) ----------
-  const HOW_STEPS = [
-    ['🔎', 'Pick a photo', 'Each photo shows a spot in the neighborhood. Harder ones are worth more points.'],
-    ['🚶', 'Find the spot with your team', 'The Map shows where you\'ve walked and where your teammates are.'],
-    ['📸', 'Stand where the photo was taken', 'Tap the photo, then <b>"I found it! Take the picture."</b> Your location is sent with it, so get right to the spot.'],
-    ['🤫', 'Results stay secret', 'You\'ll only see "Sent." Not sure you got it right? Tap <b>"Submit again"</b>. Only the newest one counts.'],
-    ['🏁', 'Come back when time is up', 'The winners are revealed on the TV at home base.'],
+  // ---------- how to play: a short card tour (lobby, first time in the game, and the "?" button) ----------
+  // The short version for the lobby. The TV demo's "How to play" sheet uses the same words.
+  const HOW_SHORT = [
+    ['🔎', 'Pick any photo. Harder ones are worth more.'],
+    ['🚶', 'Walk to the spot with your team.'],
+    ['📸', 'Stand right there and take a picture.'],
+    ['🤫', 'Results stay secret until the end.'],
+    ['🏁', 'Come back when time is up.'],
   ];
-  function howToHtml() {
-    return `<ol class="how">${HOW_STEPS.map(([i, t, d]) => `<li><span class="how-i">${i}</span><div><b>${t}</b><p>${d}</p></div></li>`).join('')}</ol>
-      <ul class="how-tips">
-        <li>Keep this page open. If your phone locks, just open it again. Nothing is lost.</li>
-        <li>No signal? Your photo is saved and sends by itself later.</li>
-        <li>Tap <b>Aa</b> at the top for bigger text.</li>
-      </ul>`;
+  const TOUR_PARTS = ['The game', 'Using the app'];
+  const ptsFor = (d) => S.data?.photos.find((p) => p.difficulty === d)?.points ?? d;
+  // Little drawings for the cards, made from the same pieces as the real screens.
+  const taPic = (emoji, hue, cls = '') => `<span class="ta-pic ${cls}" style="--h:${hue}">${emoji}</span>`;
+  const taTabs = (on) => `<div class="ta-tabs">${['photos', 'map', 'scores'].map((v) => `<span class="${v === on ? 'on' : ''}">${ICON[v]}${v[0].toUpperCase() + v.slice(1)}</span>`).join('')}</div>`;
+  const taBadge = (wait, who) => wait ? '<div class="ta-badge wait"><b>📶</b>Waiting for signal</div>' : `<div class="ta-badge"><b>✓</b>Sent by ${esc(who)}</div>`;
+
+  function tourCards() {
+    const team = myTeam(), color = team?.color || '#ee352e', me = S.data?.me?.name;
+    const mate = team?.members?.find((n) => n !== me) || 'Ava';
+    const home = S.data?.game.home;
+    const teams = (S.data?.teams || []).slice(0, 3);
+    return [
+      { part: 0, title: 'Find the spots in the photos',
+        art: `<div class="ta-hunt">${taPic('🏛️', 28)}${taPic('🌳', 120)}${taPic('🚒', 6)}</div><div class="ta-cap"><span class="bullet" style="background:${esc(color)}">${esc((team?.name || '?')[0])}</span>Walk there with your team</div>`,
+        text: 'You play on a team. The app has photos of spots around the neighborhood. Walk to each spot together and take a picture there.' },
+      { part: 0, title: 'Pick any photo',
+        art: `<div class="ta-pts">${[1, 2, 3].map((d) => `<div><span class="bullet d${d}">${'EMH'[d - 1]}</span><b>${DIFF[d]}</b><em>${ptsText(ptsFor(d))}</em></div>`).join('')}</div>`,
+        text: 'Go in any order. Every team can find every photo. Harder photos are worth more points, and the team with the most points wins.' },
+      { part: 0, title: 'Stand right on the spot',
+        art: `<div class="ta-spot"><svg viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="60" r="56" fill="#fff4d6" stroke="#d4a106" stroke-width="2" stroke-dasharray="5 4"/><circle cx="60" cy="60" r="32" fill="#d7f0df" stroke="#00933c" stroke-width="2.5"/><text x="60" y="71" text-anchor="middle" font-size="30">📍</text></svg>
+          <ul><li><i class="g"></i>Close enough: it counts</li><li><i class="y"></i>Close call: the host decides</li><li><i class="x">✕</i>Too far: it doesn't count</li></ul></div>`,
+        text: 'Stand where the photo was taken, then take your picture. Your phone tells the game where you are, so get as close as you can.' },
+      { part: 0, title: 'Results stay secret',
+        art: `<div class="ta-secret"><div class="ta-tile">${taPic('🌳', 120)}${taBadge(false, mate)}</div><div class="ta-shh">🤫<small>Results at the end</small></div></div>`,
+        text: 'After you send a picture, you\'ll only see <b>Sent</b>. Nobody finds out what counted until the end. Wrong spot? Send it again. Your team gets one answer per photo, so the newest picture replaces the old one.' },
+      { part: 0, title: 'Come back when time is up',
+        art: `<div class="ta-end"><div class="ta-sign">0:00 left</div><span class="ta-arrow">→</span><span class="ta-big">🏠</span><span class="ta-arrow">→</span><span class="ta-big">🏆</span></div>`,
+        text: `Keep an eye on the clock at the top. When time is up, head back to ${home ? `<b>${esc(home.label)}</b>` : 'home base'}. The winners are shown on the TV!` },
+
+      { part: 1, title: 'Photos: every spot to find',
+        art: `<div class="ta-phone"><div class="ta-seg"><span class="on">To find · 9</span><span>Sent · 3</span></div>
+          <div class="ta-chips"><span class="on">All</span>${[1, 2, 3].map((d) => `<span><i class="bullet d${d}">${'EMH'[d - 1]}</i>${DIFF[d]}</span>`).join('')}</div>
+          <div class="ta-grid">${taPic('🏛️', 28)}${taPic('🌳', 120)}${taPic('🚒', 6)}</div>${taTabs('photos')}</div>`,
+        text: 'Tap a photo to see it big. Pinch to zoom in. <b>To find</b> has the ones left, and <b>Sent</b> has the ones your team sent. Tap <b>Easy</b>, <b>Medium</b> or <b>Hard</b> to see only those.' },
+      { part: 1, title: 'Found it? Take the picture',
+        art: `<div class="ta-phone ta-detail">${taPic('🏛️', 28, 'wide')}<div class="ta-btn">📸 I found it! Take the picture</div><div class="ta-link">Send without a picture</div></div>`,
+        text: 'Open the photo and tap <b>📸 I found it!</b> Take the picture, then hold still for a few seconds while the app checks where you are. Camera trouble? Tap <b>Send without a picture</b>.' },
+      { part: 1, title: 'Sent, or waiting for signal',
+        art: `<div class="ta-two"><div class="ta-tile">${taPic('🌳', 120)}${taBadge(false, mate)}</div><div class="ta-tile">${taPic('🚒', 6)}${taBadge(true)}</div></div>`,
+        text: '<b>✓ Sent</b> means it went through. <b>📶 Waiting for signal</b> means it\'s saved on your phone and will send by itself later. Pictures taken before time is up still count.' },
+      { part: 1, title: 'The Map',
+        art: `<div class="ta-phone ta-map"><svg viewBox="0 0 190 104" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+            <rect width="190" height="104" fill="#ecebe4"/>${[30, 80, 130, 175].map((x) => `<line x1="${x}" y1="0" x2="${x}" y2="104" stroke="#fff" stroke-width="6"/>`).join('')}${[22, 56, 90].map((y) => `<line x1="0" y1="${y}" x2="190" y2="${y}" stroke="#fff" stroke-width="6"/>`).join('')}
+            <polygon points="10,8 182,12 178,98 14,96" fill="none" stroke="#e8590c" stroke-width="3"/>
+            <polyline points="30,90 30,56 80,56 80,22 112,22" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><polyline points="30,90 30,56 80,56 80,22 112,22" fill="none" stroke="#0039a6" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+            <g transform="translate(30 56)"><circle r="7" fill="${esc(color)}" stroke="#fff" stroke-width="1.5"/><text y="3" text-anchor="middle" font-size="8" font-weight="700" fill="#fff">✓</text></g>
+            <circle cx="104" cy="28" r="4.5" fill="${esc(color)}" stroke="#fff" stroke-width="2"/><text x="104" y="43" text-anchor="middle" font-size="8" font-weight="700" fill="#333">${esc(mate)}</text>
+            <circle cx="112" cy="22" r="5.5" fill="#0039a6" stroke="#fff" stroke-width="2"/>
+            ${home ? '<text x="155" y="80" text-anchor="middle" font-size="14">🏠</text>' : ''}
+          </svg>${taTabs('map')}</div>`,
+        text: 'You\'re the blue dot, and the line is where you\'ve walked. You\'ll see your teammates, and ✓ where your team sent photos. Stay inside the orange line. The photo spots aren\'t on the map. That\'s the hunt!' },
+      { part: 1, title: 'Scores',
+        art: `<div class="ta-phone ta-scores"><div class="ta-note">🤫 Points are secret until the end</div>
+          ${(teams.length ? teams : [{ name: 'Red', color: '#ee352e', submitted: 0 }, { name: 'Blue', color: '#0039a6', submitted: 0 }]).map((t) => `<div class="ta-srow"><span class="bullet" style="background:${esc(t.color)}">${esc(t.name[0])}</span><b>${esc(t.name)}</b><span class="grow"></span><b>${t.submitted ?? 0}</b> sent</div>`).join('')}
+          ${taTabs('scores')}</div>`,
+        text: 'See how many photos each team, and each player, has sent. The points stay secret until the results are shown on the TV at the end.' },
+      { part: 1, title: 'Location and help',
+        art: `<div class="ta-help"><div class="ta-sign"><span class="bullet" style="background:${esc(color)}">${esc((team?.name || '?')[0])}</span><span class="grow"></span><b class="hl">?</b><b class="hl">Aa</b></div>
+          <div class="ta-locbar"><span>📍 <b>Location is off.</b></span><b>Fix it</b></div></div>`,
+        text: 'The game needs your location. If a red <b>Location is off</b> bar shows up, tap <b>Fix it</b>. Tap <b>?</b> at the top to see this guide again, and <b>Aa</b> for bigger text. Phone locked? Just open this page again.' },
+    ];
   }
-  function showHowTo() {
+
+  // Next / Back, swipe, dots, and Skip. Opens at the first card, or at the start of a part.
+  function showHowTo(start = 0) {
     store.set('howto-seen', true);
-    sheet(`<h2 style="margin:0">How to play</h2>${howToHtml()}<button class="btn-primary btn-big" data-close>Got it, let's hunt!</button>`);
-    $('#sheet').classList.add('tall');
+    const cards = tourCards();
+    let i = Math.max(0, Math.min(start, cards.length - 1));
+    sheet('');
+    const o = $('#sheet'), panel = o.querySelector('.panel');
+    o.classList.add('tall', 'tour');
+    const close = () => o.remove();
+    const step = (n) => { const j = i + n; if (j >= cards.length) return close(); if (j < 0 || j === i) return; const dir = n > 0 ? 'next' : 'back'; i = j; draw(dir); };
+    const draw = (dir) => {
+      const c = cards[i], last = i === cards.length - 1;
+      panel.innerHTML = `
+        <div class="tour-top">
+          <div class="tour-parts">${TOUR_PARTS.map((p, k) => `<button data-part="${k}" class="${c.part === k ? 'on' : ''}" aria-pressed="${c.part === k}">${k + 1}. ${p}</button>`).join('')}</div>
+          <button class="tour-skip" data-skip>${last ? 'Close' : 'Skip'}</button>
+        </div>
+        <div class="tour-card ${dir ? 'in-' + dir : ''}" aria-live="polite">
+          <div class="ta" aria-hidden="true">${c.art}</div>
+          <h2>${c.title}</h2>
+          <p>${c.text}</p>
+        </div>
+        <div class="tour-dots" aria-label="Card ${i + 1} of ${cards.length}">${cards.map((x, k) => `<i class="${k === i ? 'on' : k < i ? 'done' : ''}${k && x.part !== cards[k - 1].part ? ' gap' : ''}"></i>`).join('')}</div>
+        <div class="tour-nav">
+          <button class="btn-big" data-go="-1" ${i ? '' : 'disabled'}>← Back</button>
+          <button class="btn-primary btn-big" data-go="1">${last ? 'Got it!' : 'Next →'}</button>
+        </div>`;
+      panel.querySelectorAll('[data-go]').forEach((b) => b.onclick = () => step(Number(b.dataset.go)));
+      panel.querySelectorAll('[data-part]').forEach((b) => b.onclick = () => { const j = cards.findIndex((x) => x.part === Number(b.dataset.part)); if (j !== i) step(j - i); });
+      panel.querySelector('[data-skip]').onclick = close;
+    };
+    // Swipe left for the next card, right to go back.
+    let sx = null, sy = 0;
+    panel.addEventListener('touchstart', (e) => { sx = e.touches[0].clientX; sy = e.touches[0].clientY; }, { passive: true });
+    panel.addEventListener('touchend', (e) => {
+      if (sx == null) return;
+      const dx = e.changedTouches[0].clientX - sx, dy = e.changedTouches[0].clientY - sy; sx = null;
+      if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5 && !(dx < 0 && i === cards.length - 1)) step(dx < 0 ? 1 : -1);
+    }, { passive: true });
+    draw();
   }
 
   function rankText(n) { const s = ['th', 'st', 'nd', 'rd'], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); }
@@ -729,7 +827,7 @@
       <div id="locBar"></div>`;
     S.locBarSig = '';
     renderLocBar();
-    $('#helpBtn').onclick = showHowTo;
+    $('#helpBtn').onclick = () => showHowTo();
     $('#bigBtn').onclick = () => { const on = document.body.classList.toggle('big'); store.set('big', on); };
   }
 
@@ -855,10 +953,10 @@
     if (f && revealed()) action = f.counted ? `<div class="note good"><b>✓ Counted!</b> ${f.player_name ? 'Sent by ' + byWho(f) : 'Added by the judge'}.</div>` : `<div class="note"><b>✕ Didn't count.</b> Sent by ${byWho(f)}, but it wasn't the right spot.</div>`;
     else if (!f && queuedFor(p.id)) action = `<div class="note">📶 <b>Saved on your phone.</b> It will send by itself when you have signal.</div>`;
     else if (f) action = `<div class="note good"><b>✓ Sent</b> by ${byWho(f)} at ${timeText(f.created_at)}. You'll find out if it counted at the end.</div>
-      ${live ? '<button class="btn-ghost btn-big" id="againBtn">Wrong spot? Submit again</button>' : ''}`;
+      ${live ? '<button class="btn-ghost btn-big" id="againBtn">Wrong spot? Send it again</button>' : ''}`;
     else if (live) action = `<button class="btn-primary btn-big" id="foundBtn">📸 I found it! Take the picture</button>
-      <button class="btn-ghost btn-big" id="noPicBtn">Submit without a picture</button>`;
-    else action = `<div class="note info">${S.data.game.status === 'setup' ? 'You can submit once the game starts.' : 'The game is over.'}</div>`;
+      <button class="btn-ghost btn-big" id="noPicBtn">Send without a picture</button>`;
+    else action = `<div class="note info">${S.data.game.status === 'setup' ? 'You can send pictures once the game starts.' : 'The game is over.'}</div>`;
     el.innerHTML = `
       <div class="detail-top"><button class="btn-small" id="backBtn">← Back to photos</button><span class="grow"></span>${diffTag(p.difficulty)}<b>${ptsText(p.points)}</b></div>
       ${f && f.proof ? `<div class="compare" id="compare">
@@ -879,7 +977,7 @@
     const nb = $('#noPicBtn'); if (nb) nb.onclick = () => start(false, false);
     const ab = $('#againBtn');
     if (ab) ab.onclick = () => {
-      sheet(`<div class="emoji">🔁</div><h2>Submit #${numOf(p.id)} again?</h2><p class="muted">Your team's new picture and location replace the old one. Only the newest one counts.</p>
+      sheet(`<div class="emoji">🔁</div><h2>Send #${numOf(p.id)} again?</h2><p class="muted">Your team's new picture and location replace the old one. Only the newest one counts.</p>
         <button class="btn-primary btn-big" id="againYes">Take a new picture</button><button class="btn-big" data-close>Cancel</button>`);
       $('#againYes').onclick = () => { $('#sheet')?.remove(); start(true, true); };
     };
@@ -987,7 +1085,8 @@
 
   function sheet(html) {
     let o = $('#sheet');
-    if (!o) { o = document.createElement('div'); o.id = 'sheet'; o.className = 'sheet'; document.body.appendChild(o); }
+    if (!o) { o = document.createElement('div'); o.id = 'sheet'; document.body.appendChild(o); }
+    o.className = 'sheet'; // drop extras ("tall", "tour") left by the last sheet
     o.innerHTML = `<div class="panel stack">${html}</div>`;
     o.querySelectorAll('[data-close]').forEach((b) => b.onclick = () => { o.remove(); if (b.hasAttribute('data-back') && S.detail) closeDetail(); });
   }
