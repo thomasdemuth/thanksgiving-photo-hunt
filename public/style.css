@@ -379,12 +379,105 @@ body.locked { overflow: hidden; }
 .lob-how { background: var(--white); color: var(--ink); border-radius: var(--radius); padding: .8em .9em .6em; margin-bottom: 1em; }
 .lob-how h2, .lob-h { font-size: 1.1em; margin: 0 0 .4em; }
 .lob-h { text-shadow: 0 1px 2px rgba(0,0,0,.25); }
-.how { list-style: none; margin: 0; padding: 0; text-align: left; display: grid; gap: .65em; }
-.how li { display: flex; gap: .6em; align-items: flex-start; }
-.how-i { font-size: 1.5em; line-height: 1.1; flex: none; width: 1.4em; text-align: center; }
-.how p { margin: .1em 0 0; font-size: .9em; color: var(--muted); }
-.how-tips { margin: .8em 0 .2em; padding: .6em .6em .6em 1.6em; background: #f4f1ec; border-radius: 8px; text-align: left; font-size: .85em; }
-.how-tips li + li { margin-top: .3em; }
+.how-short { list-style: none; margin: 0 0 .8em; padding: 0; display: grid; gap: .4em; font-size: .9em; }
+.how-short li { display: flex; gap: .5em; align-items: center; }
+.how-short span { font-size: 1.3em; width: 1.4em; text-align: center; flex: none; }
+.lob-how .btn-big { margin-bottom: .3em; }
+
+/* How-to cards: Next / Back, swipe, dots, Skip */
+.sheet.tour .panel { display: flex; flex-direction: column; gap: .7em; touch-action: pan-y; }
+.tour-top { display: flex; align-items: center; gap: .5em; }
+.tour-parts { display: flex; flex: 1; min-width: 0; border: 2px solid var(--ink); border-radius: var(--radius); overflow: hidden; }
+.tour-parts button { flex: 1; min-height: 38px; padding: 0 .3em; border: 0; border-radius: 0; font-size: .7em; white-space: nowrap; }
+.tour-parts button + button { border-left: 2px solid var(--ink); }
+.tour-parts button.on { background: var(--ink); color: var(--white); }
+.tour-skip { min-height: 38px; padding: 0 .6em; border: 0; background: none; font-size: .8em; font-weight: 400; text-decoration: underline; color: var(--muted); }
+.tour-card { text-align: center; }
+.tour-card h2 { margin: .5em 0 .25em; }
+.tour-card p { margin: 0; font-size: .9em; min-height: 7em; } /* room for 5 lines, so Next / Back stay put */
+.tour-card.in-next { animation: tourNext .3s ease-out; }
+.tour-card.in-back { animation: tourBack .3s ease-out; }
+@keyframes tourNext { from { opacity: 0; transform: translateX(40px); } }
+@keyframes tourBack { from { opacity: 0; transform: translateX(-40px); } }
+.tour-dots { display: flex; justify-content: center; gap: 6px; }
+.tour-dots i { width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
+.tour-dots i.done { background: #999; }
+.tour-dots i.on { background: var(--orange); width: 20px; border-radius: 4px; }
+.tour-dots i.gap { margin-left: 10px; }
+.tour-nav { display: grid; grid-template-columns: 1fr 1.4fr; gap: .6em; }
+.tour-nav button { min-height: 58px; white-space: nowrap; padding: .4em .5em; }
+.tour-nav button:disabled { visibility: hidden; }
+/* If the card is taller than the screen (big text, small phone), Next / Back stay in view at the bottom. */
+.sheet.tour .tour-nav { position: sticky; bottom: calc(-1.1em - env(safe-area-inset-bottom)); background: var(--white); margin: 0 -1.1em calc(-1.1em - env(safe-area-inset-bottom)); padding: .3em 1.1em calc(1.1em + env(safe-area-inset-bottom)); }
+body.big .tour-parts button { font-size: .62em; }
+body.big .ta { height: 112px; }
+body.big .ta > * { zoom: .75; }
+@media (max-height: 640px) { .ta { height: 112px; } .ta > * { zoom: .75; } }
+
+/* The little drawings on the cards. Fixed size so the cards don't jump around. */
+.ta { height: 150px; background: #f4f1ec; border-radius: 10px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; font-size: 13px; overflow: hidden; position: relative; }
+.ta .bullet { font-size: 11px; }
+.ta-pic { display: flex; align-items: center; justify-content: center; width: 64px; aspect-ratio: 1; border-radius: 6px; font-size: 30px; background: linear-gradient(160deg, hsl(var(--h) 55% 72%), hsl(var(--h) 45% 52%)); box-shadow: 0 1px 3px rgba(0,0,0,.2); flex: none; }
+.ta-hunt { display: flex; gap: 0; }
+.ta-hunt .ta-pic { width: 74px; border: 3px solid #fff; margin: 0 -6px; }
+.ta-hunt .ta-pic:nth-child(1) { transform: rotate(-8deg); } .ta-hunt .ta-pic:nth-child(3) { transform: rotate(8deg); }
+.ta-hunt .ta-pic:nth-child(2) { transform: translateY(-6px); z-index: 1; }
+.ta-cap { display: flex; align-items: center; gap: 6px; font-weight: 700; }
+.ta-pts { display: grid; gap: 8px; width: 210px; }
+.ta-pts div { display: flex; align-items: center; gap: 8px; background: #fff; border-radius: 8px; padding: 6px 10px; font-size: 15px; }
+.ta-pts .bullet { font-size: 13px; }
+.ta-pts em { margin-left: auto; font-style: normal; font-weight: 700; }
+.ta-spot { display: flex; align-items: center; gap: 12px; }
+.ta-spot svg { width: 118px; height: 118px; flex: none; }
+.ta-spot ul { list-style: none; margin: 0; padding: 0; text-align: left; display: grid; gap: 8px; font-size: 12.5px; font-weight: 700; }
+.ta-spot li { display: flex; align-items: center; gap: 6px; }
+.ta-spot i { width: 14px; height: 14px; border-radius: 50%; flex: none; font-style: normal; display: flex; align-items: center; justify-content: center; }
+.ta-spot i.g { background: #d7f0df; border: 2px solid #00933c; }
+.ta-spot i.y { background: #fff4d6; border: 2px dashed #d4a106; }
+.ta-spot i.x { color: var(--red); font-size: 14px; }
+.ta-tile { position: relative; border-radius: 6px; overflow: hidden; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
+.ta-tile .ta-pic { width: 104px; border-radius: 0; box-shadow: none; opacity: .45; }
+.ta-badge { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-weight: 700; font-size: 11px; text-align: center; padding: 4px; }
+.ta-badge b { width: 30px; height: 30px; border-radius: 50%; background: var(--ok); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 17px; }
+.ta-badge.wait b { background: var(--yellow); color: var(--ink); font-size: 14px; }
+.ta-secret, .ta-two { display: flex; align-items: center; gap: 18px; }
+.ta-shh { font-size: 44px; line-height: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.ta-shh small { font-size: 12px; font-weight: 700; }
+.ta-end { display: flex; align-items: center; gap: 10px; }
+.ta-sign { background: var(--ink); color: #fff; font-weight: 700; border-radius: 6px; padding: 6px 10px; display: flex; align-items: center; gap: 6px; }
+.ta-big { font-size: 38px; line-height: 1; }
+.ta-arrow { font-size: 20px; color: var(--muted); }
+.ta-phone { width: 200px; height: 138px; background: var(--bg); border: 2px solid var(--ink); border-radius: 10px; overflow: hidden; display: flex; flex-direction: column; font-size: 9px; }
+.ta-seg { display: flex; margin: 6px 6px 0; border: 1.5px solid var(--ink); border-radius: 4px; overflow: hidden; font-weight: 700; }
+.ta-seg span { flex: 1; text-align: center; padding: 2px 0; }
+.ta-seg span.on { background: var(--ink); color: #fff; }
+.ta-chips { display: flex; gap: 3px; padding: 4px 6px 0; font-weight: 700; font-size: 8px; }
+.ta-chips span { display: flex; align-items: center; gap: 2px; border: 1px solid #bbb; border-radius: 4px; padding: 1px 3px; background: #fff; }
+.ta-chips span.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+.ta-chips .bullet { font-size: 7px; font-style: normal; }
+.ta-grid { display: flex; gap: 5px; padding: 5px 6px; flex: 1; min-height: 0; }
+.ta-grid .ta-pic { width: auto; height: 100%; font-size: 22px; flex: 1; border-radius: 4px; }
+.ta-tabs { display: flex; background: #fff; border-top: 1px solid var(--line); margin-top: auto; flex: none; }
+.ta-tabs span { flex: 1; display: flex; flex-direction: column; align-items: center; padding: 2px 0 3px; color: var(--muted); border-top: 2.5px solid transparent; font-size: 8px; }
+.ta-tabs span.on { color: var(--ink); border-top-color: var(--orange); font-weight: 700; }
+.ta-tabs svg { width: 13px; height: 13px; }
+.ta-detail { padding: 6px; gap: 5px; }
+.ta-detail .ta-pic.wide { width: 100%; height: 62px; aspect-ratio: auto; font-size: 28px; border-radius: 4px; }
+.ta-btn { position: relative; background: var(--ink); color: #fff; font-weight: 700; text-align: center; padding: 6px 4px; border-radius: 4px; font-size: 10px; }
+.ta-btn::after { content: ""; position: absolute; inset: -4px; border: 2.5px solid var(--orange); border-radius: 7px; animation: taPulse 1.4s ease-out infinite; }
+@keyframes taPulse { from { opacity: 1; transform: scale(.96); } to { opacity: 0; transform: scale(1.06); } }
+.ta-link { text-align: center; text-decoration: underline; font-size: 9px; }
+.ta-map > svg { width: 100%; flex: 1; min-height: 0; display: block; }
+.ta-scores { padding: 0; }
+.ta-note { margin: 6px 6px 3px; background: #fff; border: 1px solid var(--line); border-radius: 4px; padding: 3px 5px; font-size: 8.5px; }
+.ta-srow { display: flex; align-items: center; gap: 5px; padding: 3px 8px; font-size: 10px; border-bottom: 1px solid var(--line); }
+.ta-srow .bullet { font-size: 8px; }
+.ta-help { width: 240px; display: flex; flex-direction: column; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,.25); }
+.ta-help .ta-sign { border-radius: 0; padding: 8px 10px; }
+.ta-help .hl { border: 1.5px solid #fff; border-radius: 4px; padding: 1px 7px; font-size: 12px; box-shadow: 0 0 0 3px var(--orange); margin-left: 6px; }
+.ta-locbar { display: flex; align-items: center; gap: 6px; background: #c0261c; color: #fff; padding: 6px 10px; font-size: 11.5px; }
+.ta-locbar span { flex: 1; }
+.ta-locbar > b { background: #fff; color: var(--ink); border-radius: 4px; padding: 2px 8px; }
 .sheet.tall .panel { max-height: 88vh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .lob-loc { display: inline-block; margin: .5em 0 0; padding: .35em .8em; border-radius: 99px; font-size: .85em; font-weight: 700; background: rgba(0,0,0,.25); color: var(--white); border: 0; min-height: 0; }
 .lob-loc.ok { background: rgba(255,255,255,.9); color: #0a6b2e; }

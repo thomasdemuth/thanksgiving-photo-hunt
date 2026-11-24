@@ -332,6 +332,15 @@ body.tv-page.idle, body.tv-page.idle * { cursor: none !important; }
 .tp-sheet { position: absolute; inset: 0; z-index: 4; background: rgba(0,0,0,.45); display: flex; align-items: flex-end; animation: scrin .3s; }
 .tp-sheet > div { background: #fff; width: 100%; border-radius: 12px 12px 0 0; padding: .8em .9em 1.4em; animation: sheetup .35s cubic-bezier(.2, 1, .4, 1); }
 .tp-sheet p { margin: .45em 0; font-size: .9em; }
+.tp-gtop { display: flex; align-items: center; gap: .3em; font-size: .62em; font-weight: 700; }
+.tp-gtop span { border: .12em solid var(--ink); border-radius: 5px; padding: .25em .4em; white-space: nowrap; }
+.tp-gtop span.on { background: var(--ink); color: #fff; }
+.tp-gtop u { margin-left: auto; font-weight: 400; color: var(--muted); }
+.tp-gart { height: 3.2em; margin: .5em 0 .3em; background: #f4f1ec; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 1.8em; }
+.tp-sheet p.tp-gtext { font-weight: 700; text-align: center; min-height: 2.6em; margin: .3em 0; }
+.tp-gdots { display: flex; justify-content: center; gap: .3em; margin: .2em 0 .6em; }
+.tp-gdots i { width: .4em; height: .4em; border-radius: 50%; background: #ccc; }
+.tp-gdots i.on { width: 1em; border-radius: .2em; background: var(--orange); }
 @keyframes sheetup { from { transform: translateY(100%); } }
 .tut-screen.bigtext .tp-body, .tut-screen.bigtext .tp-head { font-size: 1.18em; transition: font-size .3s; }
 .tut-callouts { display: grid; gap: 1em; max-width: 24em; }
