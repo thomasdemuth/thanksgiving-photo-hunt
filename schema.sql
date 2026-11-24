@@ -3,7 +3,7 @@ CREATE TABLE IF NOT EXISTS games (
   boundary_geojson TEXT, join_code TEXT, started_at INTEGER, ends_at INTEGER,
   revealed_at INTEGER, version INTEGER NOT NULL DEFAULT 0, tutorial_at INTEGER,
   home_lat REAL, home_lng REAL, home_label TEXT, announce_text TEXT, announce_at INTEGER,
-  random_teams INTEGER NOT NULL DEFAULT 0, teams_at INTEGER, teams_ready INTEGER NOT NULL DEFAULT 0, tv_settings TEXT, tv_cmd TEXT, tv_cmd_at INTEGER, created_at INTEGER NOT NULL
+  random_teams INTEGER NOT NULL DEFAULT 0, teams_at INTEGER, teams_ready INTEGER NOT NULL DEFAULT 0, tv_settings TEXT, tv_cmd TEXT, tv_cmd_at INTEGER, set_id TEXT, created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS teams (
   id TEXT PRIMARY KEY, game_id TEXT NOT NULL, name TEXT NOT NULL, color TEXT NOT NULL

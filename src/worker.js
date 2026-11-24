@@ -622,7 +622,7 @@ async function admin(request, env, url, who) {
     if (prev) {
       stmts.push(env.DB.prepare(`INSERT INTO photos (id, game_id, title, difficulty, points, lat, lng, radius_m, hint, image_key, thumb_key, sort)
         SELECT lower(hex(randomblob(8))), ?, title, difficulty, points, lat, lng, radius_m, hint, image_key, thumb_key, sort FROM photos WHERE game_id = ?`).bind(g.id, prev.id));
-      stmts.push(env.DB.prepare('UPDATE games SET boundary_geojson = ?, home_lat = ?, home_lng = ?, home_label = ?, random_teams = ?, tv_settings = ? WHERE id = ?').bind(prev.boundary_geojson || JSON.stringify(DEFAULT_BOUNDARY), prev.home_lat ?? null, prev.home_lng ?? null, prev.home_label ?? null, prev.random_teams ? 1 : 0, prev.tv_settings ?? null, g.id));
+      stmts.push(env.DB.prepare('UPDATE games SET boundary_geojson = ?, home_lat = ?, home_lng = ?, home_label = ?, random_teams = ?, tv_settings = ?, set_id = ? WHERE id = ?').bind(prev.boundary_geojson || JSON.stringify(DEFAULT_BOUNDARY), prev.home_lat ?? null, prev.home_lng ?? null, prev.home_label ?? null, prev.random_teams ? 1 : 0, prev.tv_settings ?? null, prev.set_id ?? null, g.id));
     } else {
       stmts.push(env.DB.prepare('UPDATE games SET boundary_geojson = ? WHERE id = ?').bind(JSON.stringify(DEFAULT_BOUNDARY), g.id));
     }
@@ -903,21 +903,26 @@ async function admin(request, env, url, who) {
 
 // ---------- photo sets ----------
 // Saved hunt content (photos, play area, home base) the host can load into a game, e.g. one set per round.
+// The game remembers which set it's using (games.set_id). Switching sets (Load, or Start a new set) saves
+// the game's photos back into that set first, so nothing is lost.
 // Sets copy only the image keys, so a picture in KV may be shared by games and sets: never delete it here.
 const SET_COLS = 'title, difficulty, points, lat, lng, radius_m, hint, image_key, thumb_key, sort';
 
 async function photoSets(request, env, parts, method) {
   const sid = parts[1] ? decodeURIComponent(parts[1]) : null;
   const body = method === 'GET' || method === 'DELETE' ? {} : await request.json().catch(() => ({}));
-  const cleanName = String(body.name ?? '').trim().slice(0, 60);
-  const nameTaken = async (exceptId) => env.DB.prepare('SELECT 1 FROM photo_sets WHERE lower(name) = lower(?) AND id != ?').bind(cleanName, exceptId || '').first();
+  const clean = (v) => String(v ?? '').trim().slice(0, 60);
+  const cleanName = clean(body.name);
+  const nameTaken = async (name, exceptId) => env.DB.prepare('SELECT 1 FROM photo_sets WHERE lower(name) = lower(?) AND id != ?').bind(name, exceptId || '').first();
+  const game = await currentGame(env);
 
   if (method === 'GET' && !sid) {
     const rows = (await env.DB.prepare(`SELECT s.id, s.name, s.created_at, s.updated_at,
         (SELECT COUNT(*) FROM photo_set_items i WHERE i.set_id = s.id) AS photos,
         s.boundary_geojson IS NOT NULL AS has_area, s.home_lat IS NOT NULL AS has_home, s.home_label
       FROM photo_sets s ORDER BY lower(s.name), s.created_at`).all()).results;
-    return json({ sets: rows });
+    const current = game?.set_id && rows.some((r) => r.id === game.set_id) ? game.set_id : null;
+    return json({ sets: rows, current });
   }
 
   const set = sid && sid !== 'fresh' ? await env.DB.prepare('SELECT * FROM photo_sets WHERE id = ?').bind(sid).first() : null;
@@ -925,7 +930,7 @@ async function photoSets(request, env, parts, method) {
 
   if (method === 'PATCH' && set && !parts[2]) {
     if (!cleanName) return json({ error: 'Give the set a name.' }, 400);
-    if (await nameTaken(set.id)) return json({ error: `There's already a set called "${cleanName}".` }, 400);
+    if (await nameTaken(cleanName, set.id)) return json({ error: `There's already a set called "${cleanName}".` }, 400);
     await env.DB.prepare('UPDATE photo_sets SET name = ? WHERE id = ?').bind(cleanName, set.id).run();
     return json({ ok: true });
   }
@@ -934,82 +939,97 @@ async function photoSets(request, env, parts, method) {
     await env.DB.batch([
       env.DB.prepare('DELETE FROM photo_set_items WHERE set_id = ?').bind(set.id),
       env.DB.prepare('DELETE FROM photo_sets WHERE id = ?').bind(set.id),
+      env.DB.prepare('UPDATE games SET set_id = NULL WHERE set_id = ?').bind(set.id),
     ]);
     return json({ ok: true });
   }
 
   // Everything below needs the current game.
-  const game = await currentGame(env);
   if (!game) return json({ error: 'Create a game first.' }, 400);
-  const copyIn = (setId) => env.DB.prepare(`INSERT INTO photo_set_items (id, set_id, ${SET_COLS})
-    SELECT lower(hex(randomblob(8))), ?, ${SET_COLS} FROM photos WHERE game_id = ?`).bind(setId, game.id);
   const count = async () => (await env.DB.prepare('SELECT COUNT(*) AS n FROM photos WHERE game_id = ?').bind(game.id).first()).n;
+  // Statements that make set `setId` hold exactly what's in the game now (photos, play area, home base).
+  const saveInto = (setId) => [
+    env.DB.prepare('DELETE FROM photo_set_items WHERE set_id = ?').bind(setId),
+    env.DB.prepare(`INSERT INTO photo_set_items (id, set_id, ${SET_COLS})
+      SELECT lower(hex(randomblob(8))), ?, ${SET_COLS} FROM photos WHERE game_id = ?`).bind(setId, game.id),
+    env.DB.prepare('UPDATE photo_sets SET boundary_geojson = ?, home_lat = ?, home_lng = ?, home_label = ?, updated_at = ? WHERE id = ?')
+      .bind(game.boundary_geojson ?? null, game.home_lat ?? null, game.home_lng ?? null, game.home_label ?? null, now(), setId),
+  ];
+  const newSet = (setId, name) => env.DB.prepare('INSERT INTO photo_sets (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)').bind(setId, name, now(), now());
+  // The set the game is using now, if it still exists.
+  const current = game.set_id ? await env.DB.prepare('SELECT id, name FROM photo_sets WHERE id = ?').bind(game.set_id).first() : null;
 
-  // Save the game's photos, play area and home base as a new set.
+  // Save the game's photos, play area and home base as a new set (the game now uses it).
   if (method === 'POST' && !sid) {
     if (!cleanName) return json({ error: 'Give the set a name.' }, 400);
-    if (await nameTaken()) return json({ error: `There's already a set called "${cleanName}". Use Update on it to save over it.` }, 400);
+    if (await nameTaken(cleanName)) return json({ error: `There's already a set called "${cleanName}". Use Save on it to save over it.` }, 400);
     const n = await count();
     if (!n) return json({ error: 'This game has no photos yet, so there is nothing to save.' }, 400);
     const newId = id();
-    await env.DB.batch([
-      env.DB.prepare('INSERT INTO photo_sets (id, name, created_at, updated_at, boundary_geojson, home_lat, home_lng, home_label) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-        .bind(newId, cleanName, now(), now(), game.boundary_geojson ?? null, game.home_lat ?? null, game.home_lng ?? null, game.home_label ?? null),
-      copyIn(newId),
-    ]);
+    await env.DB.batch([newSet(newId, cleanName), ...saveInto(newId), env.DB.prepare('UPDATE games SET set_id = ? WHERE id = ?').bind(newId, game.id)]);
     return json({ ok: true, id: newId, photos: n });
   }
 
-  // Overwrite a set with what's in the game now.
+  // Save over a set with what's in the game now (the game now uses it).
   if (method === 'PUT' && set && !parts[2]) {
     const n = await count();
     if (!n) return json({ error: 'This game has no photos, so the set was left as it was.' }, 400);
-    await env.DB.batch([
-      env.DB.prepare('DELETE FROM photo_set_items WHERE set_id = ?').bind(set.id),
-      copyIn(set.id),
-      env.DB.prepare('UPDATE photo_sets SET boundary_geojson = ?, home_lat = ?, home_lng = ?, home_label = ?, updated_at = ? WHERE id = ?')
-        .bind(game.boundary_geojson ?? null, game.home_lat ?? null, game.home_lng ?? null, game.home_label ?? null, now(), set.id),
-    ]);
+    await env.DB.batch([...saveInto(set.id), env.DB.prepare('UPDATE games SET set_id = ? WHERE id = ?').bind(set.id, game.id)]);
     return json({ ok: true, photos: n });
   }
 
-  // Start a new set from scratch: save the game's photos, play area and home base under a name (a new set,
-  // or over the set with that name), then remove every photo from the game. Play area and home base stay.
+  // Switching sets only before the game starts: photos sent point at the game's photos.
+  const notSetup = () => json({ error: 'You can only switch photo sets before the game starts. Reset the game on the Live tab first.' }, 400);
+
+  // Start a new, empty set called `name`. The photos here are saved first: into the set the game is using,
+  // or, if it isn't using one, into a new set called `old_name`. Play area and home base stay.
   if (method === 'POST' && sid === 'fresh') {
-    if (effectiveStatus(game) !== 'setup') return json({ error: 'You can only start a new set before the game starts. Reset the game on the Live tab first.' }, 400);
-    if (!cleanName) return json({ error: 'Give the set a name.' }, 400);
+    if (effectiveStatus(game) !== 'setup') return notSetup();
+    if (!cleanName) return json({ error: 'Give the new set a name.' }, 400);
+    if (await nameTaken(cleanName)) return json({ error: `There's already a set called "${cleanName}". Pick another name, or Load that set.` }, 400);
     const n = await count();
-    if (!n) return json({ error: 'This game has no photos yet, so you are already starting from scratch.' }, 400);
-    const same = await env.DB.prepare('SELECT id FROM photo_sets WHERE lower(name) = lower(?)').bind(cleanName).first();
-    const setId = same ? same.id : id();
-    await env.DB.batch([
-      ...(same
-        ? [env.DB.prepare('DELETE FROM photo_set_items WHERE set_id = ?').bind(setId),
-          env.DB.prepare('UPDATE photo_sets SET boundary_geojson = ?, home_lat = ?, home_lng = ?, home_label = ?, updated_at = ? WHERE id = ?')
-            .bind(game.boundary_geojson ?? null, game.home_lat ?? null, game.home_lng ?? null, game.home_label ?? null, now(), setId)]
-        : [env.DB.prepare('INSERT INTO photo_sets (id, name, created_at, updated_at, boundary_geojson, home_lat, home_lng, home_label) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-            .bind(setId, cleanName, now(), now(), game.boundary_geojson ?? null, game.home_lat ?? null, game.home_lng ?? null, game.home_label ?? null)]),
-      copyIn(setId),
+    const stmts = [];
+    let savedTo = null;
+    if (n && current) { stmts.push(...saveInto(current.id)); savedTo = current.name; }
+    else if (n) {
+      const oldName = clean(body.old_name);
+      if (!oldName) return json({ error: 'Name the photos here first, so they can be saved.', need_old_name: true }, 400);
+      if (oldName.toLowerCase() === cleanName.toLowerCase()) return json({ error: 'Give the old photos and the new set different names.' }, 400);
+      if (await nameTaken(oldName)) return json({ error: `There's already a set called "${oldName}". Pick another name for the photos here.` }, 400);
+      const oldId = id();
+      stmts.push(newSet(oldId, oldName), ...saveInto(oldId)); savedTo = oldName;
+    }
+    const newId = id();
+    stmts.push(
       env.DB.prepare('DELETE FROM finds WHERE game_id = ?').bind(game.id),
       env.DB.prepare('DELETE FROM photos WHERE game_id = ?').bind(game.id),
-    ]);
+      newSet(newId, cleanName),
+      env.DB.prepare('UPDATE photo_sets SET boundary_geojson = ?, home_lat = ?, home_lng = ?, home_label = ? WHERE id = ?')
+        .bind(game.boundary_geojson ?? null, game.home_lat ?? null, game.home_lng ?? null, game.home_label ?? null, newId),
+      env.DB.prepare('UPDATE games SET set_id = ? WHERE id = ?').bind(newId, game.id),
+    );
+    await env.DB.batch(stmts);
     await bump(env, game.id);
-    return json({ ok: true, id: setId, saved: n, replaced: !!same });
+    return json({ ok: true, id: newId, saved: n, saved_to: savedTo });
   }
 
-  // Replace the game's photos, play area and home base with the set's. Finds point at the old photos, so they go too.
+  // Load a set: save the game's photos into the set it's using (if any), then replace the game's photos,
+  // play area and home base with the chosen set's. Photos already sent point at the old photos, so they go too.
   if (method === 'POST' && set && parts[2] === 'load') {
-    if (effectiveStatus(game) !== 'setup') return json({ error: 'You can only load a photo set before the game starts. Reset the game on the Live tab first.' }, 400);
+    if (effectiveStatus(game) !== 'setup') return notSetup();
+    const n = await count();
+    const autosave = n && current && current.id !== set.id;
     await env.DB.batch([
+      ...(autosave ? saveInto(current.id) : []),
       env.DB.prepare('DELETE FROM finds WHERE game_id = ?').bind(game.id),
       env.DB.prepare('DELETE FROM photos WHERE game_id = ?').bind(game.id),
       env.DB.prepare(`INSERT INTO photos (id, game_id, ${SET_COLS})
         SELECT lower(hex(randomblob(8))), ?, ${SET_COLS} FROM photo_set_items WHERE set_id = ? ORDER BY sort, rowid`).bind(game.id, set.id),
-      env.DB.prepare('UPDATE games SET boundary_geojson = ?, home_lat = ?, home_lng = ?, home_label = ? WHERE id = ?')
-        .bind(set.boundary_geojson ?? null, set.home_lat ?? null, set.home_lng ?? null, set.home_label ?? null, game.id),
+      env.DB.prepare('UPDATE games SET boundary_geojson = COALESCE(?, boundary_geojson), home_lat = ?, home_lng = ?, home_label = ?, set_id = ? WHERE id = ?')
+        .bind(set.boundary_geojson ?? null, set.home_lat ?? null, set.home_lng ?? null, set.home_label ?? null, set.id, game.id),
     ]);
     await bump(env, game.id);
-    return json({ ok: true, photos: await count() });
+    return json({ ok: true, photos: await count(), saved_to: autosave ? current.name : null });
   }
 
   return json({ error: 'Not found' }, 404);

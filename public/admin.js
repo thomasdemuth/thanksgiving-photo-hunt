@@ -307,77 +307,87 @@
   }
 
   // ---------- photo sets: saved photos + play area + home base, loaded one per round ----------
+  // The game remembers which set it's using; switching sets saves that one first, so nothing is lost.
   async function renderSets() {
     const box = $('#setsCard'); if (!box) return;
     let d;
     try { d = await api('/sets'); } catch { return; }
     const { game, photos } = A.d;
-    const canLoad = game.status === 'setup';
+    const canSwitch = game.status === 'setup';
     const day = (t) => new Date(t).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
     const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+    const cur = d.sets.find((s) => s.id === d.current) || null;
+    const nextName = () => { for (let i = d.sets.length + 1; ; i++) if (!d.sets.some((s) => s.name.toLowerCase() === `round ${i}`)) return `Round ${i}`; };
     box.innerHTML = `
       <h2>📚 Photo sets <span class="count">${d.sets.length}</span></h2>
-      <p class="small muted" style="margin:0 0 .5em">Save this game's photos, play area and home base as a set, then load a different set for each round. Nothing gets re-uploaded.</p>
-      ${d.sets.map((s) => `<div class="set-row" style="padding:.35em 0;border-top:1px solid #eee">
-        <div class="small"><b>${esc(s.name)}</b> <span class="muted">· ${plural(s.photos, 'photo')}${s.has_home ? ' · 🏠' : ''} · saved ${day(s.updated_at)}</span></div>
+      <p class="small muted" style="margin:0 0 .5em">Keep a different set of photos (with its play area and home base) for each round. Switching sets saves the one you're on first.</p>
+      <div class="note" style="margin:0 0 .5em">${cur ? `This game is using <b>${esc(cur.name)}</b> · ${plural(photos.length, 'photo')} here now.` : photos.length ? `The ${plural(photos.length, 'photo')} here aren't saved as a set yet.` : 'No photos here yet.'}</div>
+      <div class="row" style="gap:.3em">
+        ${cur ? `<button class="btn-small" id="setSave" ${photos.length ? '' : 'disabled'}>💾 Save to "${esc(cur.name)}"</button>` : `<button class="btn-small" id="setNew" ${photos.length ? '' : 'disabled'}>💾 Save as a set…</button>`}
+        <button class="btn-small btn-primary" id="setFresh" ${canSwitch ? '' : 'disabled'}>🆕 Start a new set…</button>
+      </div>
+      ${d.sets.map((s) => `<div class="set-row" style="padding:.35em 0;border-top:1px solid #eee;margin-top:.4em">
+        <div class="small"><b>${esc(s.name)}</b>${s.id === d.current ? ' <span class="status live" style="font-size:.85em">in use</span>' : ''} <span class="muted">· ${s.id === d.current ? `${plural(photos.length, 'photo')} here` : plural(s.photos, 'photo')}${s.has_home ? ' · 🏠' : ''} · saved ${day(s.updated_at)}</span></div>
         <div class="row" style="gap:.3em;margin-top:.25em">
-          <button class="btn-small btn-primary" data-sload="${esc(s.id)}" ${canLoad ? '' : 'disabled'}>Load</button>
-          <button class="btn-small" data-sput="${esc(s.id)}">Update</button>
+          ${s.id === d.current ? '' : `<button class="btn-small btn-primary" data-sload="${esc(s.id)}" ${canSwitch ? '' : 'disabled'}>Load</button>`}
           <button class="btn-small" data-sname="${esc(s.id)}">Rename</button>
           <button class="btn-small kick-btn" data-sdel="${esc(s.id)}">Delete</button>
-        </div></div>`).join('') || '<p class="small muted">No sets saved yet.</p>'}
-      ${d.sets.length && !canLoad ? '<p class="small muted" style="margin:.4em 0 0">Load works only before the game starts. Reset the game on the Live tab first.</p>' : ''}
-      <div class="row" style="gap:.3em;margin-top:.5em">
-        <button class="btn-small" id="setNew" ${photos.length ? '' : 'disabled'}>+ Save as new set…</button>
-        <button class="btn-small btn-primary" id="setFresh" ${photos.length && canLoad ? '' : 'disabled'}>🆕 Start a new set…</button>
-      </div>
-      <p class="small muted" style="margin:.3em 0 0">Start a new set saves the photos here as a set, then clears them so you can add new ones. The play area and home base stay.${canLoad ? '' : ' Works only before the game starts.'}</p>
+        </div></div>`).join('')}
+      ${canSwitch ? '' : '<p class="small muted" style="margin:.4em 0 0">Load and Start a new set work only before the game starts. Reset the game on the Live tab first.</p>'}
       <p class="small" id="setMsg" style="margin:.4em 0 0">${A.setMsg || ''}</p>`;
     A.setMsg = '';
     const byId = (sid) => d.sets.find((s) => s.id === sid);
-    // The note shows after the card redraws (loading a set redraws the whole tab).
-    const msg = (html) => { A.setMsg = html; };
-    const here = `the ${plural(photos.length, 'photo')}, play area and home base in this game`;
-    $('#setNew').onclick = async () => {
-      const name = prompt(`Name this set (it saves ${here}):`, `Round ${d.sets.length + 1}`);
-      if (!name?.trim()) return;
-      const r = await api('/sets', 'POST', { name: name.trim() });
-      msg(`<b>Saved "${esc(name.trim())}"</b> with ${plural(r.photos, 'photo')}.`); renderSets();
+    const msg = (html) => { A.setMsg = html; }; // shows after the card redraws
+    const taken = (name) => d.sets.some((s) => s.name.toLowerCase() === name.toLowerCase());
+    const ask = (q, def) => { const v = prompt(q, def); return v?.trim() || null; };
+    const redraw = async () => { await refresh(); renderSetup(); };
+
+    if ($('#setSave')) $('#setSave').onclick = async () => {
+      const r = await api('/sets/' + encodeURIComponent(cur.id), 'PUT');
+      msg(`<b>Saved "${esc(cur.name)}"</b> with ${plural(r.photos, 'photo')}.`); renderSets();
+    };
+    if ($('#setNew')) $('#setNew').onclick = async () => {
+      const name = ask(`Name this set (it saves the ${plural(photos.length, 'photo')}, play area and home base here):`, d.sets.length ? nextName() : 'Round 1');
+      if (!name) return;
+      if (taken(name)) return alert(`There's already a set called "${name}".`);
+      const r = await api('/sets', 'POST', { name });
+      msg(`<b>Saved "${esc(name)}"</b> with ${plural(r.photos, 'photo')}.`); renderSets();
     };
     $('#setFresh').onclick = async () => {
-      const name = prompt(`First, save the ${plural(photos.length, 'photo')} here as a set so you can load them again later. Name it:`, `Round ${d.sets.length + 1}`);
-      if (!name?.trim()) return;
-      const same = d.sets.find((s) => s.name.toLowerCase() === name.trim().toLowerCase());
-      if (same && !confirm(`There's already a set called "${same.name}" (${plural(same.photos, 'photo')}). Save over it?`)) return;
-      if (!confirm(`Start a new set?\n\n1. The ${plural(photos.length, 'photo')} here are saved as "${name.trim()}".\n2. Every photo is removed from this game${A.d.finds.length ? ', along with photos already sent' : ''}.\n\nThe play area and home base stay. Load "${name.trim()}" any time to get the photos back.`)) return;
-      const r = await api('/sets/fresh', 'POST', { name: name.trim() });
-      msg(`<b>Saved ${plural(r.saved, 'photo')} as "${esc(name.trim())}"</b> and cleared this game. Add the new set's photos below, then press "Save as new set".`);
-      await refresh(); renderSetup();
+      const name = ask('Name the new set (it starts with no photos):', nextName());
+      if (!name) return;
+      if (taken(name)) return alert(`There's already a set called "${name}". Pick another name, or Load that set.`);
+      let oldName = null;
+      if (photos.length && !cur) {
+        oldName = ask(`First, name the ${plural(photos.length, 'photo')} here so they're saved and you can load them again later:`, d.sets.length ? 'Earlier photos' : 'Round 1');
+        if (!oldName) return;
+        if (taken(oldName) || oldName.toLowerCase() === name.toLowerCase()) return alert(`Pick a different name than "${oldName}".`);
+      }
+      const savedTo = cur ? cur.name : oldName;
+      if (!confirm(`Start the new set "${name}"?\n\n${photos.length ? `1. The ${plural(photos.length, 'photo')} here are saved to "${savedTo}".\n2. ` : ''}This game is cleared${A.d.finds.length ? ' (photos already sent too)' : ''} so you can add "${name}"'s photos.\n\nThe play area and home base stay.${savedTo ? ` Load "${savedTo}" any time to get its photos back.` : ''}`)) return;
+      const r = await api('/sets/fresh', 'POST', { name, old_name: oldName });
+      msg(`<b>Now on "${esc(name)}"</b> with no photos.${r.saved_to ? ` The ${plural(r.saved, 'photo')} from before are saved in "${esc(r.saved_to)}".` : ''} Add photos below; switching sets saves them.`);
+      await redraw();
     };
     box.querySelectorAll('[data-sload]').forEach((b) => b.onclick = async () => {
       const s = byId(b.dataset.sload);
-      if (!confirm(`Load "${s.name}"?\n\nThis replaces ${here} with the set's ${plural(s.photos, 'photo')}.${A.d.finds.length ? ' Photos already sent in this game are deleted too.' : ''}\n\nSave this game as a set first if you want to keep it.`)) return;
+      const first = photos.length ? (cur ? `The ${plural(photos.length, 'photo')} here are saved to "${cur.name}" first.` : `The ${plural(photos.length, 'photo')} here aren't saved as a set and will be replaced. Press Cancel and "Save as a set" first if you want to keep them.`) : '';
+      if (!confirm(`Load "${s.name}"?\n\n${first ? first + '\n\n' : ''}This game gets "${s.name}"'s ${plural(s.photos, 'photo')}, play area and home base.${A.d.finds.length ? ' Photos already sent in this game are deleted.' : ''}`)) return;
       b.disabled = true;
       const r = await api('/sets/' + encodeURIComponent(s.id) + '/load', 'POST').finally(() => { b.disabled = false; });
-      msg(`<b>Loaded "${esc(s.name)}"</b>: ${plural(r.photos, 'photo')}, play area and home base.`); await refresh(); renderSetup();
-    });
-    box.querySelectorAll('[data-sput]').forEach((b) => b.onclick = async () => {
-      const s = byId(b.dataset.sput);
-      if (!photos.length) { alert('This game has no photos, so there is nothing to save.'); return; }
-      if (!confirm(`Update "${s.name}" with what's here now?\n\nThe set gets ${here}, replacing its ${plural(s.photos, 'photo')}.`)) return;
-      const r = await api('/sets/' + encodeURIComponent(s.id), 'PUT');
-      msg(`<b>Updated "${esc(s.name)}"</b>: now ${plural(r.photos, 'photo')}.`); renderSets();
+      msg(`<b>Loaded "${esc(s.name)}"</b>: ${plural(r.photos, 'photo')}.${r.saved_to ? ` Saved "${esc(r.saved_to)}" first.` : ''}`);
+      await redraw();
     });
     box.querySelectorAll('[data-sname]').forEach((b) => b.onclick = async () => {
       const s = byId(b.dataset.sname);
-      const name = prompt('New name for this set:', s.name);
-      if (!name?.trim() || name.trim() === s.name) return;
-      await api('/sets/' + encodeURIComponent(s.id), 'PATCH', { name: name.trim() });
+      const name = ask('New name for this set:', s.name);
+      if (!name || name === s.name) return;
+      await api('/sets/' + encodeURIComponent(s.id), 'PATCH', { name });
       renderSets();
     });
     box.querySelectorAll('[data-sdel]').forEach((b) => b.onclick = async () => {
       const s = byId(b.dataset.sdel);
-      if (!confirm(`Delete the set "${s.name}"?\n\nThe photos in this game stay as they are.`)) return;
+      if (!confirm(`Delete the set "${s.name}"?\n\nThe photos in this game stay as they are.${s.id === d.current ? ' This game just won\'t be saved to a set anymore.' : ''}`)) return;
       await api('/sets/' + encodeURIComponent(s.id), 'DELETE');
       renderSets();
     });
