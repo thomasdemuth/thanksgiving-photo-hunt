@@ -1,6 +1,6 @@
 // TV view for home base. Kept calm and simple: a map of where everyone is, one column per team
 // showing the photos they've sent, and a big pop-up whenever a new photo comes in.
-// Uses the admin password (shared with /admin on this browser).
+// No password and no buttons: it only gets what the room may see, and the host controls it from the admin page.
 (() => {
   const POLL_MS = 3000;  // the server answers "nothing new" cheaply, so check often
   const POP_MS = 9000;       // how long a new photo stays on screen
@@ -25,49 +25,19 @@
     });
   }
 
-  // Settings, remembered on this TV.
-  const SETTINGS = {
-    noSpoilers: { label: 'No spoilers', help: 'Hide points, right/wrong and distances until you reveal the results.', def: true },
-    popups: { label: 'Pop up new photos', help: 'Show each new photo big in the middle of the screen.', def: true },
-    trails: { label: 'Walking trails', help: 'Draw the path each player has walked.', def: true },
-    names: { label: 'Names on the map', help: 'Label each player\'s dot with their name.', def: true },
-    spots: { label: 'Photo spots on the map', help: 'Show every hunt spot, numbered, like the host sees them. Careful: players could peek!', def: false },
-    joinCode: { label: 'Join code in the corner', help: 'A small QR code on the map during the game, for anyone who arrives late.', def: true },
-    sound: { label: 'Sound', help: 'A chime for new photos, and music for the final reveal.', def: true },
-  };
-  const opt = (k) => { const v = localStorage.getItem('tv-' + k); return v === null ? SETTINGS[k].def : v === '1'; };
-  const setOpt = (k, v) => localStorage.setItem('tv-' + k, v ? '1' : '0');
+  // Settings come from the server (the host sets them on the admin page). Same defaults as the server.
+  const DEFAULTS = { noSpoilers: true, players: false, trails: false, names: true, spots: false, popups: true, joinCode: true, sound: true, speed: 1 };
+  const opt = (k) => (T.d?.tv && k in T.d.tv ? T.d.tv[k] : DEFAULTS[k]);
 
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-  const T = { pw: localStorage.getItem('adminPw'), d: null, offset: 0, gameKey: null, pings: {}, lastPing: 0, seen: null, queue: [], showing: false, revealShownFor: null, map: null, L: null, markers: {}, trails: {}, sig: {} };
+  const T = { d: null, offset: 0, gameKey: null, pings: {}, lastPing: 0, seen: null, queue: [], showing: false, revealShownFor: null, map: null, L: null, markers: {}, trails: {}, sig: {} };
 
   async function api(path) {
-    const res = await fetch('/api/admin' + path, { headers: { 'x-admin': T.pw || '' } });
-    if (res.status === 401) { localStorage.removeItem('adminPw'); T.pw = null; login('Wrong password.'); throw Object.assign(new Error('auth'), { auth: true }); }
+    const res = await fetch('/api/tv' + path);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     return res.json();
-  }
-
-  function login(err) {
-    clearInterval(T.timer); T.timer = null;
-    $('#app').innerHTML = `
-      <div class="tv-login card stack">
-        <h1 class="center">📺 Photo Hunt TV</h1>
-        <form id="lf" class="stack"><label for="pw">Admin password (yours or the main one)</label><input id="pw" type="password" autocomplete="current-password" required autofocus>
-        <button class="btn-primary btn-big">Start the TV view</button></form>
-        <p class="error center">${esc(err || '')}</p>
-      </div>`;
-    $('#lf').onsubmit = async (e) => {
-      e.preventDefault();
-      try {
-        const res = await fetch('/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: $('#pw').value }) });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) { login(data.error || 'Wrong password.'); return; }
-        T.pw = data.token; localStorage.setItem('adminPw', data.token); boot();
-      } catch { login("Can't reach the game. Check your connection."); }
-    };
   }
 
   // ---------- layout ----------
@@ -78,7 +48,6 @@
           <span class="tv-title" id="title">🦃 Photo Hunt</span>
           <span class="tv-status" id="status"></span>
           <span class="tv-clock" id="clock"></span>
-          <button class="tv-gear" id="gear">⚙ Settings</button>
         </header>
         <div class="tv-main">
           <div class="tv-map-wrap"><div id="tvMap"></div><div id="cornerQr"></div><div id="over"></div></div>
@@ -89,7 +58,6 @@
     addBaseMap(T.map);
     T.L = { area: L.layerGroup().addTo(T.map), spots: L.layerGroup().addTo(T.map), trails: L.layerGroup().addTo(T.map), players: L.layerGroup().addTo(T.map) };
     T.markers = {}; T.trails = {}; T.sig = {};
-    $('#gear').onclick = (e) => { e.stopPropagation(); toggleSettings(); };
     tick();
     soundHint();
     clearInterval(T.timer); T.timer = setInterval(tick, POLL_MS);
@@ -97,28 +65,14 @@
   }
   window.addEventListener('resize', () => { if (T.map) { T.map.invalidateSize(); fit(); } });
 
-  // ---------- settings ----------
-  function toggleSettings() {
-    if ($('#settings')) { $('#settings').remove(); return; }
-    const box = document.createElement('div');
-    box.className = 'settings'; box.id = 'settings';
-    box.onclick = (e) => e.stopPropagation();
-    box.innerHTML = `<h3>TV settings</h3>
-      ${Object.entries(SETTINGS).map(([k, s]) => `<label><input type="checkbox" data-opt="${k}" ${opt(k) ? 'checked' : ''}><span><b>${s.label}</b><span>${s.help}</span></span></label>`).join('')}
-      <div class="row"><button id="fsBtn">⛶ Full screen</button><button id="tutBtn">▶ How to play</button>${T.d?.game?.revealed ? '<button id="rvBtn">🏆 Show results again</button>' : ''}</div>
-      <p class="small muted" style="margin:.6em 0 0">Keys: F full screen, H no spoilers, T how to play, R show results again.</p>`;
-    document.body.appendChild(box);
-    box.querySelectorAll('[data-opt]').forEach((c) => c.onchange = () => { setOpt(c.dataset.opt, c.checked); applySettings(); });
-    $('#fsBtn').onclick = fullscreen;
-    $('#tutBtn').onclick = () => { box.remove(); playTutorial(); };
-    const rv = $('#rvBtn'); if (rv) rv.onclick = () => { box.remove(); showReveal(); };
-  }
-  document.addEventListener('click', () => $('#settings')?.remove());
-  function applySettings() {
+  // ---------- settings (changed from the admin page) ----------
+  function applySettings(trailsChanged) {
     T.sig = {};
+    if (trailsChanged) { T.pings = {}; T.lastPing = 0; } // fetch the whole trail history next time
     T.L?.trails.clearLayers(); T.trails = {};
     T.L?.players.clearLayers(); T.markers = {};
     if (!opt('popups')) T.queue = [];
+    if (T.revealRun) T.revealRun.speed = opt('speed');
     soundHint();
     if (T.d) render();
   }
@@ -130,10 +84,10 @@
 
   // ---------- data ----------
   async function tick() {
-    if (T.busy || !T.pw || document.hidden) return;
+    if (T.busy || document.hidden) return;
     T.busy = true;
     try {
-      let d = await api('/tv?since=' + T.lastPing + (T.v && T.d ? '&v=' + encodeURIComponent(T.v) : ''));
+      let d = await api('?since=' + T.lastPing + (T.v && T.d ? '&v=' + encodeURIComponent(T.v) : ''));
       if (d.same && T.d) {
         // Nothing changed except people moving: update dots, trails and the clock.
         T.offset = d.now - Date.now();
@@ -148,17 +102,20 @@
         const hadOld = T.gameKey !== null && T.lastPing > 0;
         T.gameKey = key; T.pings = {}; T.lastPing = 0; T.seen = null; T.queue = []; T.revealShownFor = null; T.teamOrder = null;
         T.L.trails.clearLayers(); T.L.players.clearLayers(); T.markers = {}; T.trails = {}; T.sig = {};
-        if (hadOld) d = await api('/tv?since=0');
+        if (hadOld) d = await api('?since=0');
       }
       T.offset = d.now - Date.now();
       for (const p of d.pings || []) {
         (T.pings[p.player_id] ||= []).push([p.lat, p.lng]);
         if (p.at > T.lastPing) T.lastPing = p.at;
       }
+      const prevTv = T.d?.tv;
       T.d = d; T.v = d.v; T.down = false;
+      // The host changed a TV setting: redraw the map layers (and pop-ups, sound) to match.
+      if (JSON.stringify(d.tv) !== JSON.stringify(prevTv)) { applySettings(!!prevTv && prevTv.trails !== d.tv?.trails); return; }
       render();
     } catch (e) {
-      if (!e.auth) { T.down = true; renderClock(); }
+      T.down = true; renderClock();
     } finally { T.busy = false; }
   }
 
@@ -198,9 +155,21 @@
     const tut = d.game.tutorial_at;
     if (tut && tut !== T.tutSeen) { T.tutSeen = tut; if (d.now - tut < 60000 && !d.game.revealed) playTutorial(); }
     if (!tut && T.tutSeen) { T.tutSeen = null; stopTutorial(); }
+    // One-off commands from the admin page: show the results again, skip to the winner, back to the map.
+    const cmd = d.game.cmd;
+    if (cmd && cmd.at !== T.cmdSeen) {
+      const first = T.cmdSeen === undefined; T.cmdSeen = cmd.at;
+      if (!first && d.now - cmd.at < 60000) runCmd(cmd.cmd);
+    } else if (!cmd) T.cmdSeen = null;
     const rkey = d.game.id + ':' + d.game.revealed;
     if (d.game.revealed && T.revealShownFor !== rkey) { T.revealShownFor = rkey; showReveal(); }
     if (!d.game.revealed) { $('#reveal')?.remove(); T.revealShownFor = null; }
+  }
+
+  function runCmd(c) {
+    if (c === 'replay' && T.d.game.revealed) showReveal();
+    if (c === 'skip' && T.revealRun) T.revealRun.fast = true;
+    if (c === 'close') { T.revealRun = null; $('#reveal')?.remove(); $('#tvAnn')?.remove(); stopTutorial(); document.querySelectorAll('.pop-back').forEach((x) => x.remove()); }
   }
 
   function renderStatus() {
@@ -538,10 +507,12 @@
   function soundHint() {
     const need = opt('sound') && !Sound.ready();
     let el = $('#soundHint');
-    if (need && !el) { el = document.createElement('div'); el.id = 'soundHint'; el.className = 'sound-hint'; el.textContent = '🔈 Click anywhere once to turn on sound'; document.body.appendChild(el); }
+    if (need && !el) { el = document.createElement('div'); el.id = 'soundHint'; el.className = 'sound-hint'; el.textContent = '🔈 Click anywhere once for sound and full screen'; document.body.appendChild(el); }
     if (!need && el) el.remove();
   }
   ['click', 'keydown', 'touchstart'].forEach((ev) => document.addEventListener(ev, () => Sound.unlock(), { passive: true }));
+  // Browsers only allow full screen after a click, so the first click on the TV turns it on.
+  document.addEventListener('click', () => { if (!T.fsTried && !document.fullscreenElement) { T.fsTried = true; fullscreen(); } });
 
   // ---------- "How to play" demo for the TV (the admin starts it; T plays it here too) ----------
   async function playTutorial() {
@@ -567,10 +538,8 @@
         <div class="tut-phone"><div class="tut-notch"></div><div class="tut-screen" id="tutScreen"></div></div>
         <div class="tut-side" id="tutSide"></div>
       </div>
-      <div class="tut-dots" id="tutDots"></div>
-      <button class="tut-skip" id="tutSkip">Skip ✕</button>`;
+      <div class="tut-dots" id="tutDots"></div>`;
     document.body.appendChild(el);
-    $('#tutSkip').onclick = () => stopTutorial();
     const scr = () => $('#tutScreen');
     // A finger tap on something inside the phone.
     const tap = (sel) => {
@@ -757,11 +726,10 @@
     const yes = (f) => f.status === 'auto' || f.status === 'approved';
     // Each team's answer for a photo (at most one), and the photos anyone answered, in number order.
     const answer = (t, p) => d.finds.find((f) => f.team_id === t.id && f.photo_id === p.id) || null;
-    const run = (T.revealRun = { fast: false, speed: 1 });
+    const run = (T.revealRun = { fast: false, speed: opt('speed') });
     const o = document.createElement('div');
     o.className = 'reveal'; o.id = 'reveal';
-    o.innerHTML = `<div class="rv-btns"><span class="rv-speed">Speed ${[1, 2, 4].map((x) => `<button data-sp="${x}" class="${x === 1 ? 'on' : ''}">${x}×</button>`).join('')}</span><button id="rvSkip">Skip to the winner</button><button id="rvClose">Back to the map</button></div>
-      <div class="rv-stage"><div class="rv-title" id="rvTitle"></div><div class="rv-sub" id="rvSub"></div><div class="rv-round" id="rvRound"></div></div>
+    o.innerHTML = `<div class="rv-stage"><div class="rv-title" id="rvTitle"></div><div class="rv-sub" id="rvSub"></div><div class="rv-round" id="rvRound"></div></div>
       <div class="rv-lanes" id="rvLanes">${teams.map((t) => `
         <div class="lane" data-team="${esc(t.id)}" style="--c:${esc(t.color)}">
           <div class="ln-name">${esc(t.name)}<small>${esc(t.members.join(', '))}</small></div>
@@ -769,9 +737,6 @@
           <div class="ln-score">0</div>
         </div>`).join('')}</div>`;
     document.body.appendChild(o);
-    $('#rvClose').onclick = () => o.remove();
-    $('#rvSkip').onclick = () => { run.fast = true; $('#rvSkip').remove(); o.querySelector('.rv-speed')?.remove(); };
-    o.querySelectorAll('[data-sp]').forEach((b) => b.onclick = () => { run.speed = Number(b.dataset.sp); o.querySelectorAll('[data-sp]').forEach((x) => x.classList.toggle('on', x === b)); });
     const live = () => o.isConnected && T.revealRun === run;
     const pause = (ms) => (run.fast ? Promise.resolve() : wait(ms / run.speed));
     const title = (t, sub = '') => { $('#rvTitle').textContent = t; $('#rvSub').textContent = sub; $('#rvTitle').classList.remove('in'); void $('#rvTitle').offsetWidth; $('#rvTitle').classList.add('in'); };
@@ -891,12 +856,9 @@
     if (e.target.tagName === 'INPUT' || !T.d) return;
     const k = e.key.toLowerCase();
     if (k === 'f') fullscreen();
-    if (k === 'h') { setOpt('noSpoilers', !opt('noSpoilers')); applySettings(); $('#settings')?.remove(); }
-    if (k === 'r' && T.d.game?.revealed) showReveal();
-    if (k === 't') { if ($('#tut')) stopTutorial(); else playTutorial(); }
-    if (k === 'escape') { stopTutorial(); $('#settings')?.remove(); document.querySelectorAll('.pop-back').forEach((x) => x.remove()); }
+    if (k === 'escape') runCmd('close');
   });
 
   wake();
-  if (T.pw) boot(); else login();
+  boot();
 })();

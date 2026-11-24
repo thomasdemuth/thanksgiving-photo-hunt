@@ -693,6 +693,7 @@
               <div class="row" style="gap:.3em;margin-bottom:.4em">${["Head back to home base now 🏠", "15 minutes left!", "Dinner's ready! Come back 🦃"].map((t) => `<button class="btn-small" data-ann="${esc(t)}">${esc(t)}</button>`).join('')}</div>
               <div class="row"><input id="annText" maxlength="200" placeholder="Type a message…" class="grow"><button class="btn-primary btn-small" id="annSend">Send</button></div>
               <div id="annLast" class="small" style="margin-top:.4em"></div></div>
+            <div class="card" id="tvCard"></div>
             <div class="card"><h2>Judge queue <span class="count" id="jCount">0</span></h2><p class="small muted" style="margin:-.2em 0 .6em">Players never see yes or no until you reveal the results.</p><div id="judge"></div><div id="farList"></div></div>
             <div class="card"><h2>Every photo sent <span class="count" id="fCount"></span></h2><p class="small muted" style="margin:-.2em 0 .5em">Change any call at any time with Yes, No, or Reset (back to what the GPS said).</p>
               <div class="filters" id="fFilters" style="margin:0 0 .5em"></div><div id="manual"></div><div class="feed" id="feed"></div></div>
@@ -732,6 +733,37 @@
       if ($('#annClear')) $('#annClear').onclick = async () => { await api('/game', 'PATCH', { announce: null }); await refresh(); render(); };
     }
     $('#tiles').innerHTML = scoreTiles();
+
+    // TV settings and remote controls. The TV page itself has no password and no buttons.
+    const tvs = game.tv || {};
+    if (changed('tv', JSON.stringify([tvs, game.revealed_at]))) {
+      const TV_OPTS = [
+        ['noSpoilers', 'No spoilers', 'Hide points, right/wrong and distances until you reveal the results.'],
+        ['players', 'Players on the map', 'Show where each player is. Off: nobody\'s location is shown.'],
+        ['names', 'Names next to players', 'Only when players are on the map.'],
+        ['trails', 'Walking trails', 'Draw the path each player has walked.'],
+        ['spots', 'Photo spots on the map', 'Shows where every hunt photo is. Careful: anyone looking at the TV could peek!'],
+        ['popups', 'Pop up new photos', 'Show each new photo big on the screen (no right/wrong while No spoilers is on).'],
+        ['joinCode', 'Join code in the corner', 'A small QR code during the game for anyone who arrives late.'],
+        ['sound', 'Sound', 'A chime for new photos and music for the final reveal.'],
+      ];
+      $('#tvCard').innerHTML = `<h2>📺 TV</h2>
+        <p class="small muted" style="margin:-.2em 0 .5em">Open <b>${esc(location.host)}/tv</b> on the TV (no password needed) and click the screen once for sound and full screen. Change everything else here.</p>
+        <div class="stack" style="gap:.45em">${TV_OPTS.map(([k, label, help]) => `<label class="rt-toggle"><input type="checkbox" data-tv="${k}" ${tvs[k] ? 'checked' : ''}><span><b>${label}</b><br><span class="small muted">${help}</span></span></label>`).join('')}</div>
+        <div class="row" style="margin-top:.6em"><span class="small">Results show speed</span>${[1, 2, 4].map((x) => `<button class="btn-small ${(tvs.speed || 1) === x ? 'btn-primary' : ''}" data-tvspeed="${x}">${x}×</button>`).join('')}</div>
+        <div class="row" style="margin-top:.5em">${game.revealed_at ? '<button class="btn-small" data-tvcmd="replay">🏆 Show the results again</button><button class="btn-small" data-tvcmd="skip">⏭ Skip to the winner</button>' : ''}<button class="btn-small" data-tvcmd="close">🗺 Back to the map</button></div>`;
+      const saveTv = async (patch) => { try { await api('/game', 'PATCH', { tv: patch }); } finally { await refresh(); A.sig.tv = null; render(); } };
+      document.querySelectorAll('[data-tv]').forEach((c) => c.onchange = () => {
+        c.blur();
+        if (c.dataset.tv === 'spots' && c.checked && !confirm('Show every photo spot on the TV? Anyone who sees the TV will know where the photos are.')) { c.checked = false; return; }
+        saveTv({ [c.dataset.tv]: c.checked });
+      });
+      document.querySelectorAll('[data-tvspeed]').forEach((b) => b.onclick = () => saveTv({ speed: Number(b.dataset.tvspeed) }));
+      document.querySelectorAll('[data-tvcmd]').forEach((b) => b.onclick = async () => {
+        b.disabled = true;
+        try { await api('/game', 'PATCH', { tv_cmd: b.dataset.tvcmd }); } finally { b.disabled = false; }
+      });
+    }
 
     const waiting = finds.filter((f) => f.status === 'pending').length;
     const tutOn = game.tutorial_at && A.d.now - game.tutorial_at < 125000; // the demo runs about two minutes

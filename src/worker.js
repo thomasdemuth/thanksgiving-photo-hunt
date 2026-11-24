@@ -35,6 +35,18 @@ async function bump(env, gameId) {
 }
 const tag = (game) => `${game.id}:${game.version || 0}:${effectiveStatus(game)}`;
 
+// TV settings. The TV page has no password and no buttons: the host changes these from the admin page.
+// By default the map shows no locations at all (no players, trails or photo spots) and no results.
+const TV_DEFAULTS = { noSpoilers: true, players: false, trails: false, names: true, spots: false, popups: true, joinCode: true, sound: true, speed: 1 };
+const TV_CMDS = ['replay', 'skip', 'close'];
+function tvSettings(game) {
+  let s = {};
+  try { s = JSON.parse(game.tv_settings || '{}') || {}; } catch { /* use defaults */ }
+  const out = { ...TV_DEFAULTS };
+  for (const k of Object.keys(TV_DEFAULTS)) if (k in s) out[k] = k === 'speed' ? ([1, 2, 4].includes(+s[k]) ? +s[k] : 1) : !!s[k];
+  return out;
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -358,6 +370,39 @@ async function player(request, env, url) {
     return json({ game: s.game, teams: s.teams.map(({ id, name, color, players, members }) => ({ id, name, color, players, members })) });
   }
 
+  // The TV at home base. No password, so it only gets what everyone in the room may see:
+  // no locations unless the host turns them on, and no results until the reveal (or "No spoilers" off).
+  if (path === '/api/tv' && method === 'GET') {
+    const game = await currentGame(env);
+    if (!game) return json({ game: null });
+    const tv = tvSettings(game), hidden = teamsHidden(game);
+    const since = Number(url.searchParams.get('since')) || 0;
+    const rows = (await env.DB.prepare('SELECT id, team_id, name, last_lat, last_lng, last_seen_at FROM players WHERE game_id = ? AND kicked_at IS NULL ORDER BY created_at').bind(game.id).all()).results;
+    const players = rows.map((p) => ({
+      id: p.id, name: p.name, team_id: hidden ? null : p.team_id, last_seen_at: p.last_seen_at,
+      last_lat: tv.players ? p.last_lat : null, last_lng: tv.players ? p.last_lng : null,
+    }));
+    const pings = tv.trails ? (await env.DB.prepare('SELECT player_id, lat, lng, at FROM pings WHERE game_id = ? AND at > ? ORDER BY at LIMIT 8000')
+      .bind(game.id, Math.max(since, now() - 6 * 3600000)).all()).results : [];
+    const v = tag(game);
+    if (url.searchParams.get('v') === v) return json({ same: true, v, players, pings, now: now() });
+    const s = await gameState(env, game);
+    const spoil = s.game.revealed || !tv.noSpoilers;
+    const teams = s.teams.map((t) => {
+      const base = { id: t.id, name: t.name, color: t.color, members: hidden ? [] : t.members, players: hidden ? 0 : t.players, submitted: spoil ? t.submitted : t.sent };
+      return spoil ? { ...base, score: t.score, found: t.found, by_diff: t.by_diff, reached_at: t.reached_at } : { ...base, score: 0, found: 0, reached_at: 0 };
+    });
+    // Hand-added finds are always a yes, so they stay hidden with the rest of the results. Never any find locations.
+    const finds = (spoil ? s.finds : s.finds.filter((f) => f.player_id)).map((f) => ({
+      id: f.id, photo_id: f.photo_id, team_id: f.team_id, player_id: f.player_id, player_name: f.player_name,
+      created_at: f.created_at, seq: f.seq, proof_key: f.proof_key,
+      ...(spoil ? { status: f.status, distance_m: f.distance_m } : {}),
+    }));
+    const spots = tv.spots ? (await env.DB.prepare('SELECT id, lat, lng, radius_m FROM photos WHERE game_id = ? AND lat IS NOT NULL').bind(game.id).all()).results : [];
+    const cmd = game.tv_cmd ? { cmd: game.tv_cmd, at: game.tv_cmd_at } : null;
+    return json({ game: { ...s.game, cmd }, tv, teams, photos: s.photos, finds, players, spots, pings, v, now: now() });
+  }
+
   // Look for players with this name, for "Is this you, Mike on Blue team?"
   if (path === '/api/lookup' && method === 'POST') {
     const { name } = await request.json();
@@ -577,7 +622,7 @@ async function admin(request, env, url, who) {
     if (prev) {
       stmts.push(env.DB.prepare(`INSERT INTO photos (id, game_id, title, difficulty, points, lat, lng, radius_m, hint, image_key, thumb_key, sort)
         SELECT lower(hex(randomblob(8))), ?, title, difficulty, points, lat, lng, radius_m, hint, image_key, thumb_key, sort FROM photos WHERE game_id = ?`).bind(g.id, prev.id));
-      stmts.push(env.DB.prepare('UPDATE games SET boundary_geojson = ?, home_lat = ?, home_lng = ?, home_label = ?, random_teams = ? WHERE id = ?').bind(prev.boundary_geojson || JSON.stringify(DEFAULT_BOUNDARY), prev.home_lat ?? null, prev.home_lng ?? null, prev.home_label ?? null, prev.random_teams ? 1 : 0, g.id));
+      stmts.push(env.DB.prepare('UPDATE games SET boundary_geojson = ?, home_lat = ?, home_lng = ?, home_label = ?, random_teams = ?, tv_settings = ? WHERE id = ?').bind(prev.boundary_geojson || JSON.stringify(DEFAULT_BOUNDARY), prev.home_lat ?? null, prev.home_lng ?? null, prev.home_label ?? null, prev.random_teams ? 1 : 0, prev.tv_settings ?? null, g.id));
     } else {
       stmts.push(env.DB.prepare('UPDATE games SET boundary_geojson = ? WHERE id = ?').bind(JSON.stringify(DEFAULT_BOUNDARY), g.id));
     }
@@ -597,7 +642,7 @@ async function admin(request, env, url, who) {
     ]);
     const s = await gameState(env, game);
     return json({
-      game: { ...game, status: effectiveStatus(game), boundary: s.game.boundary, home: s.game.home, announce: s.game.announce },
+      game: { ...game, status: effectiveStatus(game), boundary: s.game.boundary, home: s.game.home, announce: s.game.announce, tv: tvSettings(game) },
       teams: teams.results, photos: photos.results, players: players.results, finds: finds.results,
       scores: s.teams, now: now(),
     });
@@ -685,6 +730,12 @@ async function admin(request, env, url, who) {
     // The TV plays its "How to play" demo when this changes; stop clears it.
     if (b.action === 'tutorial') { sets.push('tutorial_at = ?'); vals.push(now()); }
     if (b.action === 'tutorial_stop') { sets.push('tutorial_at = NULL'); }
+    // TV settings (merged with what's saved) and one-off TV commands (replay / skip / close the results).
+    if (b.tv && typeof b.tv === 'object') { sets.push('tv_settings = ?'); vals.push(JSON.stringify(tvSettings({ tv_settings: JSON.stringify({ ...tvSettings(game), ...b.tv }) }))); }
+    if (b.tv_cmd !== undefined) {
+      if (!TV_CMDS.includes(b.tv_cmd)) return json({ error: 'Bad TV command' }, 400);
+      sets.push('tv_cmd = ?', 'tv_cmd_at = ?'); vals.push(b.tv_cmd, now());
+    }
     if (b.action === 'reset') {
       // Play again with the same teams and photos: clear every photo sent and all trails, and remove
       // every player (their phones go back to the join screen).
@@ -814,25 +865,6 @@ async function admin(request, env, url, who) {
     }
     await bump(env, game.id);
     return json({ ok: true });
-  }
-
-  // Everything the TV at home base shows: live map, every submission and judgment, real scores.
-  if (path === '/tv' && method === 'GET') {
-    const since = Number(url.searchParams.get('since')) || 0;
-    const [pings, players] = await env.DB.batch([
-      env.DB.prepare('SELECT player_id, lat, lng, at FROM pings WHERE game_id = ? AND at > ? ORDER BY at LIMIT 8000')
-        .bind(game.id, Math.max(since, now() - 6 * 3600000)),
-      env.DB.prepare('SELECT id, team_id, name, last_lat, last_lng, last_seen_at FROM players WHERE game_id = ? AND kicked_at IS NULL ORDER BY created_at').bind(game.id),
-    ]);
-    const v = tag(game);
-    // Nothing new since the TV's last look: just the moving dots.
-    if (url.searchParams.get('v') === v) return json({ same: true, v, players: players.results, pings: pings.results, now: now() });
-    const [s, spots] = await Promise.all([
-      gameState(env, game),
-      // Where each hunt photo is, for the TV's optional "photo spots" layer (admin password only).
-      env.DB.prepare('SELECT id, lat, lng, radius_m FROM photos WHERE game_id = ? AND lat IS NOT NULL').bind(game.id).all(),
-    ]);
-    return json({ ...s, spots: spots.results, players: players.results, v, pings: pings.results, now: now() });
   }
 
   // Remove a player. Their phone goes back to the join screen; photos they sent stay with their team.

@@ -6,6 +6,8 @@ const H = { 'x-admin': pw };
 const admin = (path, method = 'GET', body) => fetch(base + '/api/admin' + path, { method, headers: { ...H, 'content-type': 'application/json' }, body: body && JSON.stringify(body) }).then(async (r) => ({ status: r.status, ...(await r.json().catch(() => ({}))) }));
 const post = (path, body, token) => fetch(base + path, { method: 'POST', headers: { ...(body instanceof FormData ? {} : { 'content-type': 'application/json' }), ...(token ? { 'x-player': token } : {}) }, body: body instanceof FormData ? body : JSON.stringify(body) }).then(async (r) => ({ status: r.status, ...(await r.json().catch(() => ({}))) }));
 const send = (tok, photo, dLat = 0, extra = {}) => { const fd = new FormData(); fd.append('photo_id', photo.id); fd.append('lat', photo.lat + dLat); fd.append('lng', photo.lng); fd.append('acc', 10); for (const [k, v] of Object.entries(extra)) fd.append(k, v); return post('/api/checkin', fd, tok); };
+// The TV feed is public (no password).
+const tvGet = (q) => fetch(base + '/api/tv' + q).then((r) => r.json());
 let ok = 0, bad = 0; const t = (name, cond, info = '') => { cond ? ok++ : bad++; console.log((cond ? 'PASS ' : 'FAIL ') + name + (cond ? '' : '  ' + JSON.stringify(info).slice(0, 400))); };
 const scoreOf = (st, tid) => st.scores.find((s) => s.id === tid).score;
 const active = (st, tid, pid) => st.finds.filter((f) => f.team_id === tid && f.photo_id === pid);
@@ -56,13 +58,13 @@ await send(b.token, pNew);
 const after = await post('/api/poll', { v: full.v }, a.token);
 t('a teammate\'s photo shows up on the next poll (no cache delay)', !after.same && after.finds.some((f) => f.photo_id === pNew.id), after.same);
 await admin('/finds', 'POST', { team_id: team2.id, photo_id: pNew.id });
-const qv1 = await admin('/tv?since=' + Date.now());
-const qv2 = await admin('/tv?since=' + Date.now() + '&v=' + encodeURIComponent(qv1.v));
+const qv1 = await tvGet('?since=' + Date.now());
+const qv2 = await tvGet('?since=' + Date.now() + '&v=' + encodeURIComponent(qv1.v));
 t('TV gets "nothing new" too, but still gets players', qv2.same === true && qv2.players.length > 0 && qv2.finds === undefined);
 await admin('/finds/' + (await admin('/state')).finds.find((f) => f.team_id === team2.id && f.photo_id === pNew.id).id, 'PATCH', { status: 'rejected' });
-const qv3 = await admin('/tv?since=' + Date.now() + '&v=' + encodeURIComponent(qv1.v));
-t('a judge call shows on the TV right away', !qv3.same && qv3.finds.some((f) => f.photo_id === pNew.id && f.status === 'rejected'));
-await admin('/finds/' + qv3.finds.find((f) => f.team_id === team2.id && f.photo_id === pNew.id).id, 'DELETE');
+const qv3 = await tvGet('?since=' + Date.now() + '&v=' + encodeURIComponent(qv1.v));
+t('a judge call updates the TV right away, but stays secret', !qv3.same && !qv3.finds.some((f) => f.team_id === team2.id && f.photo_id === pNew.id) && qv3.finds.every((f) => !('status' in f)));
+await admin('/finds/' + (await admin('/state')).finds.find((f) => f.team_id === team2.id && f.photo_id === pNew.id).id, 'DELETE');
 st = await admin('/state');
 
 // Judge
@@ -137,10 +139,13 @@ await admin('/game', 'PATCH', { action: 'reopen' });
 st = await admin('/state');
 t('reopening hides the results', st.game.status === 'live' && !st.game.revealed_at);
 
-// TV feed
-const tv = await admin('/tv?since=0');
-t('TV gets scores, finds with proof info, players and trails', tv.teams[0].score !== undefined && tv.finds.length > 0 && 'proof_key' in tv.finds[0] && Array.isArray(tv.pings) && tv.players.length > 0);
-const tv2 = await admin('/tv?since=' + Date.now());
+// TV feed (public): no locations or results by default; trails only when the host turns them on
+const tv0 = await tvGet('?since=0');
+t('TV hides locations and results by default', tv0.players.every((p) => p.last_lat == null) && tv0.pings.length === 0 && tv0.spots.length === 0 && tv0.finds.every((f) => !('status' in f) && !('lat' in f)) && tv0.teams.every((x) => !x.score));
+await admin('/game', 'PATCH', { tv: { trails: true } });
+const tv = await tvGet('?since=0');
+t('TV gets finds with proof info, players and trails', tv.teams[0].score !== undefined && tv.finds.length > 0 && 'proof_key' in tv.finds[0] && Array.isArray(tv.pings) && tv.players.length > 0);
+const tv2 = await tvGet('?since=' + Date.now());
 t('TV trail updates are incremental', tv2.pings.length === 0, tv2.pings.length);
 
 // Bookkeeping
@@ -215,7 +220,8 @@ await admin('/game', 'PATCH', { action: 'end' });
 await admin('/game', 'PATCH', { action: 'reveal' });
 await admin('/game', 'PATCH', { action: 'reset' });
 st = await admin('/state');
-const tvr = await admin('/tv?since=0');
+const tvr = await tvGet('?since=0');
+await admin('/game', 'PATCH', { tv: { trails: false } });
 t('game reset clears photos sent, scores and trails', st.finds.length === 0 && st.scores.every((x) => x.score === 0) && tvr.pings.length === 0, [st.finds.length, tvr.pings.length]);
 t('game reset removes every player and goes back to not started', st.players.length === 0 && st.game.status === 'setup' && !st.game.revealed_at);
 t('players are sent back to the join screen after a reset', (await post('/api/poll', {}, c.token)).status === 401);
