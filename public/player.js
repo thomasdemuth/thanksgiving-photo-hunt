@@ -284,7 +284,9 @@
           <button class="btn-primary btn-big">Next</button>
           <p id="joinErr" class="error"></p>
         </form>
+        <button class="btn-big" id="joinHow">❓ How to play</button>
       </div>`;
+    $('#joinHow').onclick = () => showHowTo();
     $('#nameForm').onsubmit = async (ev) => {
       ev.preventDefault();
       const name = $('#name').value.trim();
@@ -607,38 +609,36 @@
     const me = S.data.me, team = myTeam(), color = team?.color || (g.random_teams ? '#5b4636' : '#333');
     let html = '', sig = '';
     if (ph === 'lobby') {
-      // First time here: open the how-to cards (they stay open while the lobby updates underneath).
-      if (!store.get('howto-seen') && !$('#sheet') && !$('#teamReveal')) showHowTo();
       const ls = locStatus();
       const waitTeams = g.random_teams && !team; // teams are being picked at random
       sig = JSON.stringify(['lobby', me, S.data.teams.map((x) => [x.id, x.name, x.color, x.members]), S.data.everyone, g.random_teams, g.teams_ready, S.switching, ls]);
+      // Everything fits on one screen: names are one line per team (yours gets two), cut off with "+N more".
+      const names = (list, mineName) => list.length
+        ? list.map((n) => n === mineName ? `<b>${esc(n)} (you)</b>` : esc(n)).join(', ')
+        : '<span class="muted">No one yet</span>';
       const teamsHtml = waitTeams ? `
-        <h2 class="lob-h">Who's here <span class="lob-count">${(S.data.everyone || []).length}</span></h2>
-        <div class="lob-team"><div class="lob-members">${(S.data.everyone || []).map((n) => `<span class="chip ${n === me.name ? 'me' : ''}">${esc(n)}${n === me.name ? ' (you)' : ''}</span>`).join('')}</div></div>`
-        : `<h2 class="lob-h">${g.random_teams ? 'Teams (picked at random)' : 'Teams'}</h2>
-        <div class="lob-teams">${S.data.teams.map((x) => {
+        <div class="lob-team mine"><div class="lob-th"><b>Who's here</b><span class="lob-n">${(S.data.everyone || []).length}</span></div>
+          <div class="lob-names l3">${names(S.data.everyone || [], me.name)}</div></div>`
+        : S.data.teams.map((x) => {
           const mine = x.id === me.team_id;
           return `<div class="lob-team ${mine ? 'mine' : ''}">
-            <div class="lob-th"><span class="swatch" style="background:${esc(x.color)}"></span><b>${esc(x.name)}</b><span class="muted small">${x.members.length}</span>
-              <span class="grow"></span>${mine ? '<span class="lob-here">Your team</span>' : g.random_teams ? '' : `<button class="btn-small" data-switch="${esc(x.id)}" ${S.switching ? 'disabled' : ''}>Switch to ${esc(x.name)}</button>`}</div>
-            <div class="lob-members">${x.members.length ? x.members.map((n) => `<span class="chip ${mine && n === me.name ? 'me' : ''}">${esc(n)}${mine && n === me.name ? ' (you)' : ''}</span>`).join('') : '<span class="muted small">No one yet</span>'}</div>
+            <div class="lob-th"><span class="swatch" style="background:${esc(x.color)}"></span><b class="lob-tn">${esc(x.name)}</b><span class="lob-n">${x.members.length}</span>
+              <span class="grow"></span>${mine ? '<span class="lob-here">Your team</span>' : g.random_teams ? '' : `<button class="btn-small" data-switch="${esc(x.id)}" ${S.switching ? 'disabled' : ''}>Switch</button>`}</div>
+            <div class="lob-names ${mine ? 'l2' : 'l1'}">${names(x.members, mine ? me.name : null)}</div>
           </div>`;
-        }).join('')}</div>`;
+        }).join('');
       html = `<div class="lob">
-        <div class="lob-top"><span>🦃 ${esc(g.name)}</span></div>
+        <div class="lob-top"><span class="grow">🦃 ${esc(g.name)}</span></div>
         <div class="lob-hero">
-          <div class="lob-badge" style="color:${esc(color)}">${esc(waitTeams ? '?' : (team?.name || '?')[0])}</div>
-          <p class="lob-you">${waitTeams ? `You're <b>${esc(me.name)}</b>. The host is picking the teams at random.` : `You're <b>${esc(me.name)}</b> on the <b>${esc(team?.name || '')}</b> team`}</p>
+          <div class="lob-who"><div class="lob-badge" style="color:${esc(color)}">${esc(waitTeams ? '?' : (team?.name || '?')[0])}</div>
+            <p class="lob-you">${waitTeams ? `You're <b>${esc(me.name)}</b>. The host is picking the teams.` : `You're <b>${esc(me.name)}</b> on the <b>${esc(team?.name || '')}</b> team`}</p></div>
           ${ls === 'ok' ? '<p class="lob-loc ok">📍 Location is on ✓</p>'
             : ls === 'off' ? '<button class="lob-loc off" data-lochelp>📍 Location is off. Tap here to fix it</button>'
             : '<button class="lob-loc" data-lochelp>📡 Finding your location… <u>Help</u></button>'}
-          <h1>${waitTeams ? 'Waiting for the teams to be picked' : 'Waiting for other players to join'}</h1>
-          <div class="lob-dots"><i></i><i></i><i></i></div>
+          <h1>${waitTeams ? 'Waiting for the teams' : 'Waiting for everyone to join'}<span class="lob-dots"><i></i><i></i><i></i></span></h1>
         </div>
-        <div class="lob-how"><h2>How to play</h2>
-          <ul class="how-short">${HOW_SHORT.map(([i, t]) => `<li><span>${i}</span>${t}</li>`).join('')}</ul>
-          <button class="btn-primary btn-big" data-howto>Show me how to play</button></div>
-        ${teamsHtml}
+        <div class="lob-teams">${teamsHtml}</div>
+        <button class="lob-howbtn" data-howto>❓ How to play</button>
         <p class="lob-foot">The hunt starts when the host presses Start. Keep this screen open.</p>
       </div>`;
     } else if (ph === 'countdown' || ph === 'go') {
@@ -673,13 +673,6 @@
 
   // ---------- how to play: a short card tour (lobby, first time in the game, and the "?" button) ----------
   // The short version for the lobby. The TV demo's "How to play" sheet uses the same words.
-  const HOW_SHORT = [
-    ['🔎', 'Pick any photo. Harder ones are worth more.'],
-    ['🚶', 'Walk to the spot with your team.'],
-    ['📸', 'Stand right there and take a picture.'],
-    ['🤫', 'Results stay secret until the end.'],
-    ['🏁', 'Come back when time is up.'],
-  ];
   const TOUR_PARTS = ['The game', 'Using the app'];
   const ptsFor = (d) => S.data?.photos.find((p) => p.difficulty === d)?.points ?? d;
   // Little drawings for the cards, made from the same pieces as the real screens.
