@@ -22,7 +22,7 @@
       }
     });
   }
-  const TABS = { setup: 'Photos & teams', map: 'Map', live: 'Live game', results: 'Results' };
+  const TABS = { setup: 'Setup', map: 'Map', live: 'Live', results: 'Results' };
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const playerUrl = location.origin + '/';
@@ -1063,7 +1063,7 @@
       if ($('#tcMinus')) $('#tcMinus').onclick = () => { A.teamCount = Math.max(2, n - 1); render(); };
       if ($('#tcPlus')) $('#tcPlus').onclick = () => { A.teamCount = Math.min(8, n + 1); render(); };
       if ($('#shuffleBtn')) $('#shuffleBtn').onclick = async (e) => {
-        if (n !== teams.length && !confirm(`Make ${n} teams? ${n < teams.length ? `${teams.slice(n).map((t) => t.name).join(', ')} will be removed.` : 'New teams are added with default names and colors (rename them on the Photos & teams tab).'}`)) return;
+        if (n !== teams.length && !confirm(`Make ${n} teams? ${n < teams.length ? `${teams.slice(n).map((t) => t.name).join(', ')} will be removed.` : 'New teams are added with default names and colors (rename them on the Setup tab).'}`)) return;
         if (game.teams_ready && !confirm('Shuffle again? Everyone gets a new team, hidden until you reveal again.')) return;
         e.target.disabled = true;
         try { await api('/game', 'PATCH', { action: 'shuffle', count: n }); } finally { await refresh(); A.sig.players = null; render(); }

@@ -10,11 +10,7 @@
    collapsible section (details.fold); tab bar. */
 
 body.admin {
-  --fs-display: 2rem;    --fw-display: 800;
-  --fs-title: 1.375rem;  --fw-title: 700;
-  --fs-body: 1.0625rem;  --fw-body: 400;  --fw-button: 700;
-  --fs-small: 0.875rem;  --fw-small: 400;
-  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px; --sp-6: 32px;
+  /* Type and spacing tokens come from style.css (:root), shared with the player screens. */
   --radius: 12px; --r-sm: 6px;
   --btn-big: 52px;
   --btn-small: 40px;
