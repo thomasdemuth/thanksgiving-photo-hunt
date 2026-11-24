@@ -420,6 +420,8 @@ body.locked { overflow: hidden; }
 .host-msg { z-index: 90; }
 .host-msg .panel { gap: .5em; }
 .hm-icon { font-size: 3em; line-height: 1; }
+.hm-one + .hm-one { border-top: 1px solid rgba(0,0,0,.1); padding-top: .5em; }
+.host-msg .panel { max-height: 85vh; overflow-y: auto; }
 .hm-text { font-size: 1.5em; font-weight: 700; margin: .2em 0 .4em; white-space: pre-wrap; overflow-wrap: anywhere; }
 .player-pin.out { box-shadow: 0 0 0 3px #c0261c, 0 0 10px #c0261c; }
 .rt-toggle { display: flex; gap: .6em; align-items: flex-start; cursor: pointer; }

@@ -54,3 +54,8 @@ CREATE TABLE IF NOT EXISTS photo_set_items (
   hint TEXT, image_key TEXT NOT NULL, thumb_key TEXT NOT NULL, sort INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_set_items_set ON photo_set_items(set_id);
+CREATE TABLE IF NOT EXISTS messages (
+  id TEXT PRIMARY KEY, game_id TEXT NOT NULL, team_id TEXT NOT NULL, text TEXT NOT NULL, created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_messages_game ON messages(game_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_players_team ON players(team_id);

@@ -778,7 +778,8 @@
               <div class="grow stack" id="controls"></div>
               <div style="width:130px;text-align:center"><div class="qr">${qrSvg(playerUrl)}</div><button class="btn-small" id="tvBtn" style="margin-top:.4em;width:100%">Big join code</button><a class="btn btn-small" href="/tv" target="_blank" style="margin-top:.3em;width:100%">📺 Live TV view</a></div>
             </div></div>
-            <div class="card"><h2>📣 Message everyone</h2><p class="small muted" style="margin:-.2em 0 .5em">Pops up on every phone (with a buzz) and on the TV.</p>
+            <div class="card"><h2>📣 Send a message</h2><p class="small muted" style="margin:-.2em 0 .5em">Pops up with a buzz. <b>Everyone</b> also shows it on the TV; a single team's message goes only to that team's phones.</p>
+              <div class="row" style="gap:.4em;margin-bottom:.4em"><label class="small" for="annTo">To</label><select id="annTo" class="grow"></select></div>
               <div class="row" style="gap:.3em;margin-bottom:.4em">${["Head back to home base now 🏠", "15 minutes left!", "Dinner's ready! Come back 🦃"].map((t) => `<button class="btn-small" data-ann="${esc(t)}">${esc(t)}</button>`).join('')}</div>
               <div class="row"><input id="annText" maxlength="200" placeholder="Type a message…" class="grow"><button class="btn-primary btn-small" id="annSend">Send</button></div>
               <div id="annLast" class="small" style="margin-top:.4em"></div></div>
@@ -798,7 +799,11 @@
       const sendAnn = async () => {
         const t = $('#annText').value.trim(); if (!t) return $('#annText').focus();
         $('#annSend').disabled = true;
-        try { await api('/game', 'PATCH', { announce: t }); $('#annText').value = ''; await refresh(); } finally { $('#annSend').disabled = false; }
+        const to = $('#annTo').value;
+        try {
+          if (to) await api('/messages', 'POST', { team_id: to, text: t }); else await api('/game', 'PATCH', { announce: t });
+          $('#annText').value = ''; await refresh();
+        } finally { $('#annSend').disabled = false; }
         render();
       };
       $('#annSend').onclick = sendAnn;
@@ -816,10 +821,25 @@
     const busy = document.activeElement && ['SELECT', 'INPUT'].includes(document.activeElement.tagName);
     // Only redraw a section when its content changed, so buttons don't move under the mouse.
     const changed = (key, val) => { if (!full && A.sig?.[key] === val) return false; (A.sig ||= {})[key] = val; return true; };
-    const ann = A.d.game.announce;
-    if (changed('ann', JSON.stringify(ann))) {
-      $('#annLast').innerHTML = ann ? `<span class="muted">Last sent ${new Date(ann.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}:</span> “${esc(ann.text)}” <button class="btn-small" id="annClear">Take it down</button>` : '';
-      if ($('#annClear')) $('#annClear').onclick = async () => { await api('/game', 'PATCH', { announce: null }); await refresh(); render(); };
+    const ann = A.d.game.announce, msgs = A.d.messages || [];
+    if (changed('annTo', JSON.stringify(teams.map((t) => [t.id, t.name])))) {
+      const sel = $('#annTo'), was = sel.value;
+      sel.innerHTML = `<option value="">Everyone (phones and TV)</option>` + teams.map((t) => `<option value="${esc(t.id)}">${esc(t.name)} only</option>`).join('');
+      if ([...sel.options].some((o) => o.value === was)) sel.value = was;
+    }
+    if (changed('ann', JSON.stringify([ann, msgs, teams.map((t) => [t.id, t.name, t.color])]))) {
+      const hm = (at) => new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      const tName = (id) => { const t = teams.find((x) => x.id === id); return t ? `<b style="color:${esc(t.color)}">${esc(t.name)}</b>` : 'a removed team'; };
+      const rows = [
+        ...(ann ? [{ at: ann.at, html: `<b>Everyone</b>`, text: ann.text, del: 'all' }] : []),
+        ...msgs.slice(0, 8).map((m) => ({ at: m.at, html: tName(m.team_id), text: m.text, del: m.id })),
+      ].sort((a, b) => b.at - a.at);
+      $('#annLast').innerHTML = rows.map((r) => `<div class="row" style="gap:.4em;align-items:baseline;margin-top:.25em"><span class="grow"><span class="muted">${hm(r.at)} to</span> ${r.html}: “${esc(r.text)}”</span><button class="btn-small" data-anndel="${esc(r.del)}">Take down</button></div>`).join('');
+      document.querySelectorAll('[data-anndel]').forEach((b) => b.onclick = async () => {
+        b.disabled = true;
+        if (b.dataset.anndel === 'all') await api('/game', 'PATCH', { announce: null }); else await api('/messages/' + b.dataset.anndel, 'DELETE');
+        await refresh(); render();
+      });
     }
     $('#tiles').innerHTML = scoreTiles();
 

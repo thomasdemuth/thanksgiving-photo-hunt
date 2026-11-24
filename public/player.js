@@ -408,7 +408,7 @@
     S.locSince = Date.now();
     watchPermission(); startWatch(); locTick();
     // Check every 4 s, or every 1.5 s in the lobby so everyone's countdown starts together.
-    setInterval(() => { if (Date.now() - (S.lastPoll || 0) >= (phase() === 'lobby' ? 1500 : POLL_MS)) poll(); }, 500);
+    setInterval(() => { if (Date.now() - (S.lastPoll || 0) >= (phase() === 'lobby' ? 2500 : POLL_MS)) poll(); }, 500);
     setInterval(locTick, LOC_MS);
     setInterval(() => { renderClock(); renderScreen(); renderLocBar(); }, 250);
     document.addEventListener('visibilitychange', () => {
@@ -454,7 +454,7 @@
         if (wasOffline) renderTop();
       } else {
         S.data = d; S.v = d.v;
-        announce(d); hostMessage(d.game); teamReveal(d);
+        announce(d); hostMessage(d); teamReveal(d);
         renderAll();
       }
       flushQueue();
@@ -508,19 +508,33 @@
     confetti();
   }
 
-  // A message the host sent to everyone ("Dinner's ready, come back!"). Shown once per phone.
-  function hostMessage(g) {
-    const a = g.announce, key = 'msg-' + g.id;
-    if (!a) { $('#hostMsg')?.remove(); return; }
-    if (store.get(key, 0) >= a.at) return;
-    store.set(key, a.at);
-    if (Date.now() + S.offset - a.at > 20 * 60000) return; // old news for someone who just opened the app
+  // Messages from the host: to everyone ("Dinner's ready, come back!") or just to this team.
+  // Each one pops up once per phone; several unseen ones show together, newest first.
+  function hostMessage(d) {
+    const g = d.game, key = 'msg-' + g.id;
+    const all = [
+      ...(g.announce ? [{ id: 'all-' + g.announce.at, text: g.announce.text, at: g.announce.at, team: false }] : []),
+      ...(d.messages || []).map((m) => ({ id: m.id, text: m.text, at: m.at, team: true })),
+    ].sort((a, b) => b.at - a.at);
+    // Drop any message the host took down while it was on screen.
+    S.shownMsgs = (S.shownMsgs || []).filter((m) => all.some((x) => x.id === m.id));
+    const seen = store.get(key, 0);
+    const fresh = all.filter((m) => m.at > seen && Date.now() + S.offset - m.at < 20 * 60000); // skip old news for someone who just opened the app
+    if (all.length) store.set(key, Math.max(seen, all[0].at));
+    if (fresh.length) S.shownMsgs = [...fresh, ...S.shownMsgs.filter((m) => !fresh.some((f) => f.id === m.id))];
     let o = $('#hostMsg');
+    if (!S.shownMsgs.length) { o?.remove(); return; }
+    if (!fresh.length && o && o.dataset.ids === S.shownMsgs.map((m) => m.id).join()) return;
+    if (!fresh.length && !o) return;
     if (!o) { o = document.createElement('div'); o.id = 'hostMsg'; o.className = 'sheet host-msg'; document.body.appendChild(o); }
-    o.innerHTML = `<div class="panel stack center"><div class="hm-icon">📣</div><div class="small muted">Message from the host · ${timeText(a.at)}</div>
-      <p class="hm-text">${esc(a.text)}</p><button class="btn-primary btn-big" id="hmOk">Got it</button></div>`;
-    $('#hmOk').onclick = () => o.remove();
-    if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 400]);
+    o.dataset.ids = S.shownMsgs.map((m) => m.id).join();
+    const team = myTeam();
+    o.innerHTML = `<div class="panel stack center"><div class="hm-icon">📣</div>
+      ${S.shownMsgs.map((m) => `<div class="hm-one"><div class="small muted">${m.team ? `Just for ${team ? `<b style="color:${esc(team.color)}">${esc(team.name)}</b>` : 'your team'}` : 'Message from the host'} · ${timeText(m.at)}</div>
+        <p class="hm-text">${esc(m.text)}</p></div>`).join('')}
+      <button class="btn-primary btn-big" id="hmOk">Got it</button></div>`;
+    $('#hmOk').onclick = () => { o.remove(); S.shownMsgs = []; };
+    if (fresh.length && navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 400]);
   }
 
   function toast(color, html) {

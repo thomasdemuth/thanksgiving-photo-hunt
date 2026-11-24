@@ -261,7 +261,7 @@ async function gameState(env, game) {
   const ver = [game.version || 0, effectiveStatus(game), game.ends_at, game.revealed_at, game.started_at].join('|');
   const hit = stateCache.get(game.id);
   if (hit && hit.ver === ver && now() - hit.at < STATE_TTL_MS) return hit.data;
-  const [teams, photos, finds, players] = await env.DB.batch([
+  const [teams, photos, finds, players, msgs] = await env.DB.batch([
     env.DB.prepare('SELECT id, name, color FROM teams WHERE game_id = ? ORDER BY rowid').bind(game.id),
     env.DB.prepare('SELECT id, title, difficulty, points, hint, image_key, thumb_key FROM photos WHERE game_id = ? ORDER BY sort, rowid').bind(game.id),
     env.DB.prepare(`SELECT f.id, f.photo_id, f.team_id, f.player_id, f.status, f.lat, f.lng, f.accuracy_m, f.distance_m, f.proof_key,
@@ -269,6 +269,7 @@ async function gameState(env, game) {
                     FROM finds f LEFT JOIN players p ON p.id = f.player_id
                     WHERE f.game_id = ? AND f.status != 'replaced' ORDER BY f.created_at, f.rowid`).bind(game.id),
     env.DB.prepare('SELECT id, team_id, name, adult FROM players WHERE game_id = ? AND kicked_at IS NULL ORDER BY created_at').bind(game.id),
+    env.DB.prepare('SELECT id, team_id, text, created_at AS at FROM messages WHERE game_id = ? ORDER BY created_at DESC LIMIT 100').bind(game.id),
   ]);
   const pts = Object.fromEntries(photos.results.map((p) => [p.id, p.points]));
   const diff = Object.fromEntries(photos.results.map((p) => [p.id, p.difficulty]));
@@ -312,6 +313,8 @@ async function gameState(env, game) {
     })),
     finds: finds.results,
     players: players.results,
+    // The host's messages to single teams, newest first. Each phone only gets its own team's.
+    messages: msgs.results,
   };
   stateCache.set(game.id, { at: now(), ver, data });
   return data;
@@ -324,7 +327,7 @@ function playerView(s, me, mates) {
   if (s.game.random_teams && !s.game.teams_ready) {
     // Teams are being picked at random: nobody sees a team yet, just who has joined.
     const teams = s.teams.map((t) => ({ id: t.id, name: t.name, color: t.color, members: [], players: 0, roster: [], submitted: 0 }));
-    return { game: s.game, teams, photos: s.photos, finds: [], mates: [], events: [], everyone: s.players.map((p) => p.name) };
+    return { game: s.game, teams, photos: s.photos, finds: [], mates: [], events: [], messages: [], everyone: s.players.map((p) => p.name) };
   }
   const teams = s.teams.map((t) => {
     const base = { id: t.id, name: t.name, color: t.color, members: t.members, players: t.players, roster: t.roster, submitted: revealed ? t.submitted : t.sent };
@@ -348,7 +351,8 @@ function playerView(s, me, mates) {
     });
   // Newest arrivals (by insert order, so late offline photos still pop up).
   const events = [...visible].sort((a, b) => a.seq - b.seq).slice(-40).map((f) => ({ id: f.id, team_id: f.team_id, at: f.created_at }));
-  return { game: s.game, teams, photos: s.photos, finds, mates, events };
+  const messages = s.messages.filter((m) => m.team_id === me.team_id).slice(0, 10);
+  return { game: s.game, teams, photos: s.photos, finds, mates, events, messages };
 }
 
 async function playerFromToken(env, request) {
@@ -646,7 +650,7 @@ async function admin(request, env, url, who) {
     return json({
       game: { ...game, status: effectiveStatus(game), boundary: s.game.boundary, home: s.game.home, announce: s.game.announce, tv: tvSettings(game) },
       teams: teams.results, photos: photos.results, players: players.results, finds: finds.results,
-      scores: s.teams, now: now(),
+      scores: s.teams, messages: s.messages, now: now(),
     });
   }
 
@@ -745,11 +749,29 @@ async function admin(request, env, url, who) {
         env.DB.prepare('DELETE FROM finds WHERE game_id = ?').bind(game.id),
         env.DB.prepare('DELETE FROM pings WHERE game_id = ?').bind(game.id),
         env.DB.prepare('DELETE FROM players WHERE game_id = ?').bind(game.id),
+        env.DB.prepare('DELETE FROM messages WHERE game_id = ?').bind(game.id),
       ]);
       sets.push("status = 'setup'", 'started_at = NULL', 'ends_at = NULL', 'revealed_at = NULL', 'announce_text = NULL', 'announce_at = NULL', 'teams_at = NULL', 'teams_ready = 0');
     }
     if (!sets.length) return json({ error: 'Nothing to change' }, 400);
     await env.DB.prepare(`UPDATE games SET ${sets.join(', ')} WHERE id = ?`).bind(...vals, game.id).run();
+    await bump(env, game.id);
+    return json({ ok: true });
+  }
+
+  // A message to one team: pops up on that team's phones only.
+  if (parts[0] === 'messages' && method === 'POST' && !parts[1]) {
+    const b = await request.json().catch(() => ({}));
+    const text = String(b.text || '').trim().slice(0, 200);
+    if (!text) return json({ error: 'Type a message first.' }, 400);
+    const team = await env.DB.prepare('SELECT id FROM teams WHERE id = ? AND game_id = ?').bind(b.team_id, game.id).first();
+    if (!team) return json({ error: 'That team is gone.' }, 404);
+    await env.DB.prepare('INSERT INTO messages (id, game_id, team_id, text, created_at) VALUES (?, ?, ?, ?, ?)').bind(id(), game.id, team.id, text, now()).run();
+    await bump(env, game.id);
+    return json({ ok: true });
+  }
+  if (parts[0] === 'messages' && method === 'DELETE' && parts[1]) {
+    await env.DB.prepare('DELETE FROM messages WHERE id = ? AND game_id = ?').bind(parts[1], game.id).run();
     await bump(env, game.id);
     return json({ ok: true });
   }
