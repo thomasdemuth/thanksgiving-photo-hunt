@@ -44,10 +44,10 @@
   function login(err) {
     $('#app').innerHTML = `
       <div class="login card stack">
-        <h1 class="center">🦃 Photo Hunt Admin</h1>
+        <h1>Photo Hunt admin</h1>
         <form id="lf" class="stack"><label for="pw">Password</label><input id="pw" type="password" autocomplete="current-password" required autofocus>
         <button class="btn-primary btn-big">Sign in</button></form>
-        <p class="error center">${esc(err || '')}</p>
+        <p class="error">${esc(err || '')}</p>
       </div>`;
     $('#lf').onsubmit = async (e) => {
       e.preventDefault();
@@ -67,7 +67,7 @@
     try { info = await fetch('/api/auth/invite?t=' + encodeURIComponent(token)).then((r) => r.json()); } catch { /* shown below */ }
     const done = () => { history.replaceState(null, '', location.pathname); }; // drop the token from the address bar
     if (!info.ok) {
-      $('#app').innerHTML = `<div class="login card stack"><h1 class="center">🦃 Photo Hunt Admin</h1>
+      $('#app').innerHTML = `<div class="login card stack"><h1>Photo Hunt admin</h1>
         <p class="note">This link has expired or was already used. Ask for a new one.</p>
         <button class="btn-big" id="toLogin">I already have a password</button></div>`;
       $('#toLogin').onclick = () => { done(); A.pw ? boot().catch(() => {}) : login(); };
@@ -75,15 +75,15 @@
     }
     $('#app').innerHTML = `
       <div class="login card stack">
-        <h1 class="center">🦃 Welcome, ${esc(info.name)}!</h1>
-        <p class="center muted" style="margin:0">Create a password so you can help run the Photo Hunt. You'll use it to sign in on any phone or computer.</p>
+        <h1>Welcome, ${esc(info.name)}!</h1>
+        <p class="muted" style="margin:0">Create a password to help run the Photo Hunt. It works on any phone or computer.</p>
         <form id="af" class="stack">
           <input type="text" name="username" autocomplete="username" value="${esc(info.name)}" hidden>
           <div><label for="np">New password</label><input id="np" type="password" autocomplete="new-password" minlength="8" required autofocus></div>
           <div><label for="np2">Type it again</label><input id="np2" type="password" autocomplete="new-password" minlength="8" required></div>
-          <label class="small" style="font-weight:400;display:flex;gap:.4em;align-items:center"><input type="checkbox" id="showPw" style="width:auto;min-height:0"> Show password</label>
+          <label class="check-row"><input type="checkbox" id="showPw"> Show password</label>
           <button class="btn-primary btn-big">Create password and sign in</button>
-          <p class="error center" id="afErr"></p>
+          <p class="error" id="afErr"></p>
         </form>
       </div>`;
     $('#showPw').onchange = (e) => { $('#np').type = $('#np2').type = e.target.checked ? 'text' : 'password'; };
@@ -108,14 +108,13 @@
     let d;
     try { d = await api('/admins'); } catch { return; }
     const day = (t) => new Date(t).toLocaleDateString([], { month: 'short', day: 'numeric' });
+    const sum = $('#adminsSum'); if (sum) sum.textContent = `Signed in as ${d.me.name}${d.admins.length ? ` · ${d.admins.length} admin${d.admins.length === 1 ? '' : 's'}` : ''}${d.invites.length ? ` · ${d.invites.length} invite${d.invites.length === 1 ? '' : 's'} open` : ''}`;
     box.innerHTML = `
-      <h2>Admins</h2>
-      <p class="small muted" style="margin:0 0 .5em">Signed in as <b>${esc(d.me.name)}</b>. Invite someone (like Dad) to help run the game with their own password.</p>
-      ${d.admins.map((a) => `<div class="row" style="padding:.25em 0"><span class="grow small"><b>${esc(a.name)}</b> <span class="muted">· added ${day(a.created_at)}</span></span><button class="btn-small kick-btn" data-adel="${esc(a.id)}">Remove</button></div>`).join('')}
-      ${d.invites.map((i) => `<div class="row" style="padding:.25em 0"><span class="grow small">${esc(i.name)} <span class="muted">· invite link open until ${day(i.expires_at)}</span></span><button class="btn-small" data-idel="${esc(i.id)}">Cancel link</button></div>`).join('')}
-      <form id="invForm" class="row" style="margin-top:.5em;gap:.4em"><input id="invName" class="grow" placeholder="Their name, e.g. Dad" maxlength="30" style="min-width:0"><button class="btn-small btn-primary">Create invite link</button></form>
+      ${d.admins.map((a) => `<div class="line-row"><span class="grow"><b>${esc(a.name)}</b> <span class="small muted">added ${day(a.created_at)}</span></span><button class="btn-small btn-ghost btn-danger" data-adel="${esc(a.id)}">Remove</button></div>`).join('')}
+      ${d.invites.map((i) => `<div class="line-row"><span class="grow">${esc(i.name)} <span class="small muted">invite open until ${day(i.expires_at)}</span></span><button class="btn-small" data-idel="${esc(i.id)}">Cancel link</button></div>`).join('')}
+      <form id="invForm"><label for="invName">Invite a helper with their own password</label><div class="field-row"><input id="invName" class="grow" placeholder="Their name, e.g. Dad" maxlength="30"><button class="btn-primary">Create invite link</button></div></form>
       <div id="invOut"></div>
-      <button class="btn-ghost small" id="signOut" style="margin-top:.4em;min-height:0;padding:0">Sign out of this browser</button>`;
+      <button class="btn-small btn-ghost" id="signOut">Sign out of this browser</button>`;
     box.querySelectorAll('[data-adel]').forEach((b) => b.onclick = async () => {
       const a = d.admins.find((x) => x.id === b.dataset.adel);
       if (!confirm(`Remove ${a.name} as an admin? They'll be signed out everywhere.`)) return;
@@ -128,10 +127,10 @@
       const r = await api('/admins/invite', 'POST', { name });
       const link = `${location.origin}/admin#invite=${r.token}`;
       await renderAdmins();
-      $('#invOut').innerHTML = `<div class="note good" style="margin-top:.6em">
-        <b>Send this link to ${esc(r.name)}.</b> It works once and expires in 7 days. It lets them create their own password.
-        <input id="invLink" readonly value="${esc(link)}" style="margin:.5em 0;font-size:.85em">
-        <div class="row" style="gap:.4em"><button class="btn-small btn-primary" id="copyInv">Copy link</button>${navigator.share ? '<button class="btn-small" id="shareInv">Share…</button>' : ''}</div></div>`;
+      $('#invOut').innerHTML = `<div class="note good stack">
+        <div><b>Send this link to ${esc(r.name)}.</b> It works once and expires in 7 days.</div>
+        <input id="invLink" readonly value="${esc(link)}">
+        <div class="row"><button class="btn-small btn-primary" id="copyInv">Copy link</button>${navigator.share ? '<button class="btn-small" id="shareInv">Share…</button>' : ''}</div></div>`;
       $('#invLink').onclick = (ev) => ev.target.select();
       $('#copyInv').onclick = async () => {
         try { await navigator.clipboard.writeText(link); } catch { $('#invLink').select(); document.execCommand('copy'); }
@@ -148,38 +147,93 @@
 
 
   // ---------- shell ----------
+  // The top bar: game name, status as plain text, and the one main action for this phase.
+  // The tabs sit under it on a computer and along the bottom of the screen on a phone.
   async function boot() {
     $('#app').innerHTML = `
-      <header class="a-head">
-        <span class="brand">🦃 Photo Hunt</span>
-        <nav>${Object.entries(TABS).map(([k, v]) => `<button data-tab="${k}">${v}</button>`).join('')}</nav>
-        <span class="grow"></span>
-        <span id="status"></span>
+      <header class="a-top" id="aTop">
+        <div class="a-id"><div class="a-name" id="aName"></div><div class="a-state" id="status"></div></div>
+        <div class="a-act" id="aAct"></div>
+        <nav class="a-tabs" id="aTabs">${Object.entries(TABS).map(([k, v]) => `<button data-tab="${k}"><span>${v}</span><span class="badge hidden" id="badge-${k}"></span></button>`).join('')}</nav>
       </header>
-      <div class="wrap" id="body"></div>`;
+      <main class="wrap" id="body"></main>`;
     document.querySelectorAll('[data-tab]').forEach((b) => b.onclick = () => show(b.dataset.tab));
+    A.sig = {}; A.topSig = null;
+    // Keep the page's top offset in step with the header height (it changes with long game names).
+    if (window.ResizeObserver) new ResizeObserver(() => document.body.style.setProperty('--top-h', $('#aTop').offsetHeight + 'px')).observe($('#aTop'));
     await refresh();
     show(['live', 'starting', 'ended'].includes(A.d?.game?.status) ? 'live' : 'setup');
     // One refresh loop for the whole page; it pauses while signed out.
+    // Live and Results redraw every 3 seconds (the judge sees photos as they arrive). The other tabs only
+    // update the top bar and tab badges, less often, and never redraw what's being edited.
     if (!A.timer) A.timer = setInterval(() => {
-      if (A.pw && A.d?.game && (A.tab === 'live' || A.tab === 'results') && !document.hidden) refresh().then(() => render()).catch(() => {});
-    }, 3000); // every 3 seconds, so the judge sees photos as they arrive
+      if (!A.pw || !A.d?.game || document.hidden) return;
+      A.ticks = (A.ticks || 0) + 1;
+      if (A.tab === 'live' || A.tab === 'results') refresh().then(() => render()).catch(() => {});
+      else if (A.ticks % 4 === 0) refresh().catch(() => {});
+    }, 3000);
+    if (!A.clock) A.clock = setInterval(tickClock, 1000);
   }
 
-  async function refresh() { A.d = await api('/state'); renderStatus(); }
+  async function refresh() { A.d = await api('/state'); A.skew = (A.d.now || Date.now()) - Date.now(); renderStatus(); }
+
+  const PHASE_TEXT = { setup: 'Setting up', starting: 'Starting…', live: 'Live', ended: 'Ended' };
+  function timeLeft() {
+    const g = A.d?.game; if (!g || g.status !== 'live' || !g.ends_at) return '';
+    const ms = g.ends_at - (Date.now() + (A.skew || 0));
+    if (ms <= 0) return "time's up";
+    const m = Math.floor(ms / 60000), sec = Math.floor((ms % 60000) / 1000);
+    return m >= 10 ? `${m} min left` : `${m}:${String(sec).padStart(2, '0')} left`;
+  }
+  function tickClock() {
+    const el = $('#aTime'); if (el) el.textContent = timeLeft();
+  }
 
   function renderStatus() {
     const g = A.d?.game;
+    if (!$('#aName')) return;
     const waiting = (A.d?.finds || []).filter((f) => f.status === 'pending').length;
-    $('#status').innerHTML = g ? `${waiting ? `<button class="btn-small judge-pill" id="judgePill">⚖ ${waiting} to judge</button>` : ''}<a class="btn btn-small tv-link" href="/tv" target="_blank">📺 TV view</a> <span class="status ${g.status}">${{ setup: 'Not started', starting: 'Starting…', live: 'Live', ended: g.revealed_at ? 'Ended · results revealed' : 'Ended · results hidden' }[g.status]}</span>` : '';
+    const noPin = (A.d?.photos || []).filter((p) => p.lat == null).length;
+    $('#aName').textContent = g ? g.name : 'Photo Hunt';
+    const state = !g ? '' : g.status === 'ended' && g.revealed_at ? 'Results shown'
+      : g.status === 'live' ? `Live · <span id="aTime">${g.ends_at ? timeLeft() : 'no timer'}</span>` : PHASE_TEXT[g.status];
+    if ($('#status').innerHTML !== state) $('#status').innerHTML = state;
+    // Tab badges: photos waiting for the judge, photos without a pin.
+    const badge = (k, n, title) => { const b = $('#badge-' + k); if (!b) return; b.textContent = n || ''; b.title = title || ''; b.classList.toggle('hidden', !n); };
+    badge('live', waiting, `${waiting} waiting for the judge`);
+    badge('map', noPin, `${noPin} photo${noPin === 1 ? '' : 's'} need a pin`);
+    // The one main action. Only redrawn when it changes, so it never jumps under a finger.
+    const act = !g ? null : g.status === 'setup' ? ['start', 'btn-ok', '▶ Start']
+      : g.status === 'starting' ? ['end', 'btn-bad', '■ Stop']
+      : g.status === 'live' ? ['end', 'btn-bad', '■ End game']
+      : !g.revealed_at ? ['reveal', 'btn-ok', 'Reveal results']
+      : A.tab !== 'results' ? ['results', 'btn-primary', 'See results'] : null;
+    const sig = JSON.stringify(act);
+    if (sig === A.topSig) return;
+    A.topSig = sig;
+    $('#aAct').innerHTML = act ? `<button class="${act[1]}" id="topAct">${act[2]}</button>` : '';
+    if (act) $('#topAct').onclick = (e) => topAction(act[0], e.currentTarget);
   }
 
-  // Jump to the judge queue from anywhere.
-  document.addEventListener('click', (e) => {
-    if (!e.target.closest('#judgePill')) return;
-    if (A.tab !== 'live') show('live');
-    setTimeout(() => $('#judge')?.closest('.card')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
-  });
+  // The top-bar button does exactly what the same button on the Live tab does, with the same questions.
+  async function topAction(kind, btn) {
+    const g = A.d.game;
+    const waiting = A.d.finds.filter((f) => f.status === 'pending').length;
+    if (kind === 'results') return show('results');
+    if (kind === 'start') { // Starting needs the game length, so go to the Start card on the Live tab.
+      if (A.tab !== 'live') show('live');
+      const card = $('#controls')?.closest('.sec');
+      if (card) { card.scrollIntoView({ behavior: 'smooth', block: 'start' }); card.classList.remove('flash'); void card.offsetWidth; card.classList.add('flash'); }
+      return;
+    }
+    const body = kind === 'end' ? { action: 'end' } : { action: 'reveal' };
+    const ask = kind === 'end' ? 'End the game for everyone? Results stay hidden until you press Reveal.'
+      : waiting ? `${waiting} answer${waiting > 1 ? 's are' : ' is'} still waiting for the judge and won't count. Reveal anyway?` : 'Reveal the results to everyone now?';
+    if (!confirm(ask)) return;
+    btn.disabled = true;
+    try { await api('/game', 'PATCH', body); await refresh(); } finally { btn.disabled = false; }
+    render();
+  }
 
   // Tap a picture in the judge queue or the photo list to see it big, next to the photo it should match,
   // with the Yes / No buttons right there.
@@ -207,8 +261,11 @@
   function show(tab) {
     A.tab = tab; A.placing = null; A.drawing = null;
     document.querySelectorAll('[data-tab]').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
+    document.body.dataset.tab = tab;
     Object.values(A.maps).forEach((m) => m.remove()); A.maps = {};
     $('#body').innerHTML = '';
+    scrollTo(0, 0);
+    renderStatus(); // "See results" hides on the Results tab
     render(true);
   }
 
@@ -221,8 +278,8 @@
   }
 
   function renderNoGame() {
-    $('#body').innerHTML = `<div class="card stack" style="max-width:480px;margin:8vh auto">
-      <h1>Create your game</h1><label for="gn">Game name</label><input id="gn" value="Thanksgiving Photo Hunt">
+    $('#body').innerHTML = `<div class="card stack narrow">
+      <h1>Create your game</h1><div><label for="gn">Game name</label><input id="gn" value="Thanksgiving Photo Hunt"></div>
       <button class="btn-primary btn-big" id="mk">Create game</button></div>`;
     $('#mk').onclick = async () => { await api('/game', 'POST', { name: $('#gn').value }); await refresh(); show('setup'); };
   }
@@ -247,46 +304,45 @@
     $('#body').innerHTML = `
       <div class="layout">
         <div class="stack">
-          <div class="card stack">
+          <section class="card stack sec">
             <h2>Game</h2>
             <div><label for="gname">Name</label><input id="gname" value="${esc(game.name)}"></div>
-            <p class="small muted" style="margin:0">Players join at<br><a href="${esc(playerUrl)}" target="_blank"><b>${esc(playerUrl)}</b></a></p>
-            <details><summary class="small muted" style="cursor:pointer">Start over with a fresh game</summary>
-              <p class="small" style="margin-top:.6em">Makes a new game with the same photos and play area. Players, finds, and scores are cleared.</p>
+            <p class="small muted">Players join at <a href="${esc(playerUrl)}" target="_blank"><b>${esc(playerUrl)}</b></a></p>
+            <details class="mini"><summary>Start over with a fresh game</summary>
+              <p class="small">Same photos and play area. Players, finds and scores are cleared.</p>
               <button class="btn-small btn-bad" id="fresh">Create fresh game</button></details>
-          </div>
-          <div class="card">
+          </section>
+          <section class="card sec">
             <h2>Teams <span class="count">${teams.length}</span></h2>
             ${teams.map((t) => {
               const ms = players.filter((p) => p.team_id === t.id);
-              return `<div class="team-row"><input type="color" value="${esc(t.color)}" data-tcolor="${t.id}"><input class="grow" value="${esc(t.name)}" data-tname="${t.id}"><button class="x-btn" data-tdel="${t.id}" title="Remove team">✕</button></div>
-                ${ms.length ? `<p class="small muted" style="margin:-.2em 0 .6em 48px">${ms.map((p) => esc(p.name)).join(', ')}</p>` : ''}`;
+              return `<div class="team-row"><input type="color" value="${esc(t.color)}" data-tcolor="${t.id}" aria-label="Team color"><input class="grow" value="${esc(t.name)}" data-tname="${t.id}" aria-label="Team name"><button class="btn-small btn-ghost x-btn" data-tdel="${t.id}" title="Remove team" aria-label="Remove team">✕</button></div>
+                ${ms.length ? `<p class="small muted team-ms">${ms.map((p) => esc(p.name)).join(', ')}</p>` : ''}`;
             }).join('')}
             <button class="btn-small" id="addTeam">+ Add team</button>
-          </div>
-          <div class="card" id="setsCard"><h2>📚 Photo sets</h2><p class="small muted">Loading…</p></div>
-          <div class="card" id="adminsCard"><h2>Admins</h2><p class="small muted">Loading…</p></div>
+          </section>
+          <details class="card sec fold" id="setsSec"><summary><h2>Photo sets</h2><span class="sum" id="setsSum"></span></summary><div id="setsCard"><p class="small muted">Loading…</p></div></details>
+          <details class="card sec fold" id="adminsSec"><summary><h2>Admins</h2><span class="sum" id="adminsSum"></span></summary><div id="adminsCard"><p class="small muted">Loading…</p></div></details>
         </div>
-        <div class="card stack">
-          <h2>Photos <span class="count">${photos.length}</span>
-            <span class="grow"></span>
-            <span class="small muted" style="font-weight:400">${counts[0]} easy · ${counts[1]} medium · ${counts[2]} hard</span></h2>
+        <section class="card stack sec">
+          <h2>Photos <span class="count">${photos.length}</span></h2>
+          <p class="small muted">${counts[0]} easy · ${counts[1]} medium · ${counts[2]} hard</p>
           <div class="drop" id="drop">
-            <b>Drag photos here</b> or <label class="btn btn-primary btn-small" style="display:inline-flex;margin:0 .3em">Choose photos<input type="file" id="files" accept="image/*,.heic,.heif,.HEIC,.HEIF" multiple class="hidden"></label>
-            <p class="small muted" style="margin:.5em 0 0">iPhone photos (HEIC) and JPEGs both work. Photos with a saved location get pinned on the map automatically.</p>
-            <details class="small muted" style="margin:.4em 0 0;text-align:left"><summary style="cursor:pointer;text-align:center">How to keep the locations</summary>
-              <ul style="margin:.4em 0 0;padding-left:1.2em">
+            <label class="btn btn-primary btn-big">Add photos<input type="file" id="files" accept="image/*,.heic,.heif,.HEIC,.HEIF" multiple class="hidden"></label>
+            <p class="small muted">Or drag them here. Photos with a saved location are pinned automatically.</p>
+            <details class="mini"><summary>How to keep the locations</summary>
+              <ul class="small">
                 <li><b>Mac Photos app:</b> select the photos and drag them onto this box. Or File → Export → Export Unmodified Originals, then drag those files here.</li>
                 <li><b>iPhone:</b> the photo picker can remove locations. In Photos, select the photos → Share → <b>Options</b> → turn on <b>Location</b> → Save to Files. Then tap Choose photos → Browse and pick them from Files.</li>
                 <li><b>Missing a location?</b> The photo still uploads; place its pin on the Map tab.</li>
               </ul></details>
-            <p id="upProg" class="small" style="margin:.4em 0 0"></p>
+            <p id="upProg" class="small"></p>
           </div>
           ${photos.length ? radiusBar(photos) : ''}
-          ${noPin ? `<div class="note"><b>${noPin} photo${noPin > 1 ? 's need' : ' needs'} a pin.</b> No location was saved in ${noPin > 1 ? 'them' : 'it'}. Click "Place pin".</div>` : ''}
+          ${noPin ? `<div class="note"><b>${noPin} photo${noPin > 1 ? 's need' : ' needs'} a pin.</b> Tap "Place pin".</div>` : ''}
           ${photos.length ? `<div class="plist">
-            ${photos.map(photoRow).join('')}</div>` : '<p class="muted center">No photos yet.</p>'}
-        </div>
+            ${photos.map(photoRow).join('')}</div>` : '<p class="muted">No photos yet.</p>'}
+        </section>
       </div>`;
 
     $('#gname').onchange = (e) => api('/game', 'PATCH', { name: e.target.value });
@@ -318,23 +374,23 @@
     const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
     const cur = d.sets.find((s) => s.id === d.current) || null;
     const nextName = () => { for (let i = d.sets.length + 1; ; i++) if (!d.sets.some((s) => s.name.toLowerCase() === `round ${i}`)) return `Round ${i}`; };
+    const sum = $('#setsSum'); if (sum) sum.textContent = cur ? `Using ${cur.name}` : photos.length ? 'Not saved as a set' : plural(d.sets.length, 'set');
     box.innerHTML = `
-      <h2>📚 Photo sets <span class="count">${d.sets.length}</span></h2>
-      <p class="small muted" style="margin:0 0 .5em">Keep a different set of photos (with its play area and home base) for each round. Switching sets saves the one you're on first.</p>
-      <div class="note" style="margin:0 0 .5em">${cur ? `This game is using <b>${esc(cur.name)}</b> · ${plural(photos.length, 'photo')} here now.` : photos.length ? `The ${plural(photos.length, 'photo')} here aren't saved as a set yet.` : 'No photos here yet.'}</div>
-      <div class="row" style="gap:.3em">
-        ${cur ? `<button class="btn-small" id="setSave" ${photos.length ? '' : 'disabled'}>💾 Save to "${esc(cur.name)}"</button>` : `<button class="btn-small" id="setNew" ${photos.length ? '' : 'disabled'}>💾 Save as a set…</button>`}
-        <button class="btn-small btn-primary" id="setFresh" ${canSwitch ? '' : 'disabled'}>🆕 Start a new set…</button>
+      <p class="small muted">One set of photos, play area and home base per round. Switching saves the one you're on first.</p>
+      <div class="note">${cur ? `This game is using <b>${esc(cur.name)}</b> · ${plural(photos.length, 'photo')} here now.` : photos.length ? `The ${plural(photos.length, 'photo')} here aren't saved as a set yet.` : 'No photos here yet.'}</div>
+      <div class="row">
+        ${cur ? `<button class="btn-small" id="setSave" ${photos.length ? '' : 'disabled'}>Save to "${esc(cur.name)}"</button>` : `<button class="btn-small" id="setNew" ${photos.length ? '' : 'disabled'}>Save as a set…</button>`}
+        <button class="btn-small btn-primary" id="setFresh" ${canSwitch ? '' : 'disabled'}>Start a new set…</button>
       </div>
-      ${d.sets.map((s) => `<div class="set-row" style="padding:.35em 0;border-top:1px solid #eee;margin-top:.4em">
-        <div class="small"><b>${esc(s.name)}</b>${s.id === d.current ? ' <span class="status live" style="font-size:.85em">in use</span>' : ''} <span class="muted">· ${s.id === d.current ? `${plural(photos.length, 'photo')} here` : plural(s.photos, 'photo')}${s.has_home ? ' · 🏠' : ''} · saved ${day(s.updated_at)}</span></div>
-        <div class="row" style="gap:.3em;margin-top:.25em">
+      ${d.sets.map((s) => `<div class="set-row">
+        <div><b>${esc(s.name)}</b>${s.id === d.current ? ' <b class="in-use">· in use</b>' : ''} <span class="small muted">${s.id === d.current ? `${plural(photos.length, 'photo')} here` : plural(s.photos, 'photo')}${s.has_home ? ' · home base' : ''} · saved ${day(s.updated_at)}</span></div>
+        <div class="row">
           ${s.id === d.current ? '' : `<button class="btn-small btn-primary" data-sload="${esc(s.id)}" ${canSwitch ? '' : 'disabled'}>Load</button>`}
           <button class="btn-small" data-sname="${esc(s.id)}">Rename</button>
-          <button class="btn-small kick-btn" data-sdel="${esc(s.id)}">Delete</button>
+          <button class="btn-small btn-ghost btn-danger" data-sdel="${esc(s.id)}">Delete</button>
         </div></div>`).join('')}
-      ${canSwitch ? '' : '<p class="small muted" style="margin:.4em 0 0">Load and Start a new set work only before the game starts. Reset the game on the Live tab first.</p>'}
-      <p class="small" id="setMsg" style="margin:.4em 0 0">${A.setMsg || ''}</p>`;
+      ${canSwitch ? '' : '<p class="small muted">Load and Start a new set work only before the game starts. Reset the game on the Live tab first.</p>'}
+      <p class="small" id="setMsg">${A.setMsg || ''}</p>`;
     A.setMsg = '';
     const byId = (sid) => d.sets.find((s) => s.id === sid);
     const msg = (html) => { A.setMsg = html; }; // shows after the card redraws
@@ -405,8 +461,8 @@
         <input class="f-hint" data-f="hint" value="${esc(p.hint)}" placeholder="Hint (optional)">
       </div>
       <div class="pact">
-        <button class="btn pin-btn ${p.lat == null ? 'need' : ''}" data-place="${p.id}">${p.lat == null ? '📍 Place pin' : '✓ On map'}</button>
-        <button class="x-btn" data-pdel="${p.id}" title="Delete photo">✕</button>
+        <button class="btn-small pin-btn ${p.lat == null ? 'btn-primary' : ''}" data-place="${p.id}">${p.lat == null ? 'Place pin' : '✓ On map'}</button>
+        <button class="btn-small btn-ghost x-btn" data-pdel="${p.id}" title="Delete photo" aria-label="Delete photo">✕</button>
       </div>
     </div>`;
   }
@@ -419,19 +475,16 @@
     photos.forEach((p) => { tally[p.radius_m] = (tally[p.radius_m] || 0) + 1; });
     const common = Object.entries(tally).sort((a, b) => b[1] - a[1]);
     const now = common.map(([r, n]) => `${r} m on ${n === photos.length ? 'all' : n}`).join(', ');
-    return `<div class="radius-bar">
-      <div><b>Check-in radius</b> <span class="small muted">· how close a player has to be for a "yes". Now: ${now}.</span></div>
-      <div class="row" style="gap:.4em;margin-top:.4em">
-        <span class="small">Set</span>
-        <select id="radWho" style="width:auto"><option value="">all ${photos.length} photos</option>${[1, 2, 3].map((d) => `<option value="${d}">${DIFF[d]} photos (${photos.filter((p) => p.difficulty === d).length})</option>`).join('')}</select>
-        <span class="small">to</span>
-        <span class="unit" style="width:84px"><input id="radVal" type="number" min="5" max="500" value="${common[0][0]}"><i>m</i></span>
+    return `<details class="radius-bar fold"><summary><b>Check-in radius</b><span class="sum">${now}</span></summary>
+      <p class="small muted">How close a player has to be for a "yes".</p>
+      <div class="row">
+        <select id="radWho" aria-label="Which photos"><option value="">All ${photos.length} photos</option>${[1, 2, 3].map((d) => `<option value="${d}">${DIFF[d]} photos (${photos.filter((p) => p.difficulty === d).length})</option>`).join('')}</select>
+        <span class="unit"><input id="radVal" type="number" min="5" max="500" value="${common[0][0]}" aria-label="Radius in meters"><i>m</i></span>
         <span class="small muted" id="radFt">≈ ${ft(common[0][0])} ft</span>
-        ${[25, 40, 60, 100].map((r) => `<button class="btn-small rad-pre" data-rad="${r}">${r} m</button>`).join('')}
-        <button class="btn-small btn-primary" id="radApply">Apply</button>
       </div>
-      <p class="small muted" style="margin:.3em 0 0">Photos already sent get re-checked with the new radius. The judge's own yes/no calls stay. Change one photo in its row below, or on the Map tab.</p>
-    </div>`;
+      <div class="row">${[25, 40, 60, 100].map((r) => `<button class="btn-small rad-pre" data-rad="${r}">${r} m</button>`).join('')}
+        <button class="btn-small btn-primary" id="radApply">Apply</button></div>
+    </details>`;
   }
   function bindRadiusBar() {
     const val = $('#radVal'); if (!val) return;
@@ -585,13 +638,13 @@
       <div class="map-layout">
         <div style="position:relative"><div id="adminMap"></div><div id="mapHint"></div></div>
         <div class="card side">
-          <div class="side-head">
-            <h2 style="margin-bottom:.2em">Pins <span class="count" id="pinCount"></span></h2>
-            <div class="row" style="gap:.3em">
-              <button class="btn-small" id="drawBtn">✏️ Redraw play area</button>
+          <div class="side-head stack">
+            <div class="row">
+              <button class="btn-small" id="drawBtn">Redraw play area</button>
               <button class="btn-small" id="defaultBtn" title="Canal, Greenwich, Christopher, 6th Ave">Reset area</button>
             </div>
-            <div class="row" style="gap:.3em;margin-top:.3em" id="homeRow"></div>
+            <div class="home-row" id="homeRow"></div>
+            <h2>Pins <span class="count" id="pinCount"></span></h2>
             <div class="filters" id="chips"></div>
           </div>
           <div class="side-list" id="sideList"></div>
@@ -609,7 +662,7 @@
       if (A.drawing) return finishDrawing();
       A.drawing = []; A.placing = null;
       $('#drawBtn').textContent = '✓ Done drawing';
-      hint('Click each corner of the play area, then click "Done drawing".', true);
+      hint('Tap each corner of the play area, then "Done drawing".', true);
       drawArea2();
     };
     $('#defaultBtn').onclick = async () => { if (!confirm('Reset the play area to Canal, Greenwich, Christopher and 6th Ave?')) return; await api('/game', 'PATCH', { boundary: 'default' }); await refresh(); drawArea2(true); };
@@ -626,7 +679,7 @@
     const el = $('#mapHint'); if (!el) return;
     el.innerHTML = text ? `<div class="map-hint">${text}${cancel ? '<button class="btn-small" id="cancelHint">Cancel</button>' : ''}</div>` : '';
     const c = $('#cancelHint');
-    if (c) c.onclick = () => { A.placing = null; A.placingHome = false; if (A.drawing) { A.drawing = null; $('#drawBtn').textContent = '✏️ Redraw play area'; drawArea2(); } hint(''); };
+    if (c) c.onclick = () => { A.placing = null; A.placingHome = false; if (A.drawing) { A.drawing = null; $('#drawBtn').textContent = 'Redraw play area'; drawArea2(); } hint(''); };
   }
 
   function drawArea2() {
@@ -638,7 +691,7 @@
 
   async function finishDrawing() {
     const pts = A.drawing; A.drawing = null;
-    $('#drawBtn').textContent = '✏️ Redraw play area';
+    $('#drawBtn').textContent = 'Redraw play area';
     hint('');
     if (pts.length >= 3) { await api('/game', 'PATCH', { boundary: pts }); await refresh(); }
     drawArea2();
@@ -655,9 +708,9 @@
       mk.on('dragend', async () => { const ll = mk.getLatLng(); await saveHome({ lat: +ll.lat.toFixed(6), lng: +ll.lng.toFixed(6), label: h.label }); });
     }
     $('#homeRow').innerHTML = h
-      ? `<span class="small grow">🏠 <b>${esc(h.label)}</b> <span class="muted">(drag to move)</span></span><button class="btn-small" id="homeName">Rename</button><button class="btn-small" id="homeDel">Remove</button><a class="btn btn-small" href="/area" target="_blank">🖨 Map for players</a>`
-      : `<button class="btn-small" id="homeSet">🏠 Set home base</button><span class="small muted grow">Every player sees it on their map.</span><a class="btn btn-small" href="/area" target="_blank">🖨 Map for players</a>`;
-    if ($('#homeSet')) $('#homeSet').onclick = () => { A.placing = null; A.drawing = null; A.placingHome = true; hint('Click where home base is (where the TV and dinner are).', true); };
+      ? `<div>Home base: <b>${esc(h.label)}</b> <span class="small muted">drag its pin to move it</span></div><div class="row"><button class="btn-small" id="homeName">Rename</button><button class="btn-small" id="homeDel">Remove</button><a class="btn btn-small" href="/area" target="_blank">Map for players</a></div>`
+      : `<div class="row"><button class="btn-small" id="homeSet">Set home base</button><a class="btn btn-small" href="/area" target="_blank">Map for players</a></div>`;
+    if ($('#homeSet')) $('#homeSet').onclick = () => { A.placing = null; A.drawing = null; A.placingHome = true; hint('Tap where home base is (where the TV and dinner are).', true); };
     if ($('#homeName')) $('#homeName').onclick = async () => { const label = prompt('What should players see on the map?', h.label); if (label?.trim()) await saveHome({ ...h, label: label.trim() }); };
     if ($('#homeDel')) $('#homeDel').onclick = async () => { if (confirm('Remove the home base pin from everyone\'s map?')) await saveHome(null); };
   }
@@ -702,8 +755,8 @@
       <div class="side-item ${A.sel === p.id ? 'sel' : ''}" data-item="${p.id}">
         <img src="/img/${esc(p.thumb_key)}" loading="lazy" alt="">
         <span class="t"><b>#${i + 1}</b> ${esc(p.title || '')}<br><span class="small">${diffTag(p.difficulty)} · ${p.points} pt</span></span>
-        ${p.lat == null ? `<button class="btn pin-btn need" data-place2="${p.id}">Place</button>` : ''}
-      </div>` : '').join('') || '<p class="muted center small" style="padding:1em">No photos here.</p>';
+        ${p.lat == null ? `<button class="btn-small btn-primary pin-btn" data-place2="${p.id}">Place</button>` : ''}
+      </div>` : '').join('') || '<p class="muted pad">No photos here.</p>';
     document.querySelectorAll('[data-item]').forEach((el) => el.onclick = (e) => { if (!e.target.closest('[data-place2]')) select(el.dataset.item, true); });
     document.querySelectorAll('[data-place2]').forEach((b) => b.onclick = () => { select(b.dataset.place2); startPlacing(b.dataset.place2); });
   }
@@ -716,7 +769,7 @@
     const item = document.querySelector(`[data-item="${pid}"]`); if (item) item.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     if (fly && p?.lat != null) A.maps.admin.flyTo([p.lat, p.lng], Math.max(A.maps.admin.getZoom(), 17), { duration: 0.5 });
     if (p && p.lat != null) {
-      hint(`<b>#${i + 1}</b> ${esc(p.title || '')} <span class="hint-rad">Radius <input type="range" id="selRad" min="5" max="200" step="5" value="${Math.min(200, p.radius_m)}"> <b id="selRadTxt">${p.radius_m} m · ${ft(p.radius_m)} ft</b></span> <span style="opacity:.7">drag the pin to move it</span>`);
+      hint(`<b>#${i + 1}</b> ${esc(p.title || '')} <span class="hint-rad">Radius <input type="range" id="selRad" min="5" max="200" step="5" value="${Math.min(200, p.radius_m)}"> <b id="selRadTxt">${p.radius_m} m · ${ft(p.radius_m)} ft</b></span> <span class="hint-sub">drag the pin to move it</span>`);
       const sl = $('#selRad');
       sl.oninput = () => { const r = Number(sl.value); $('#selRadTxt').textContent = `${r} m · ${ft(r)} ft`; A.selRing?.setRadius(r); };
       sl.onchange = async () => {
@@ -731,7 +784,7 @@
   function startPlacing(pid) {
     A.placing = pid; A.drawing = null;
     const i = A.d.photos.findIndex((p) => p.id === pid);
-    hint(`<b>Click the map where photo #${i + 1} was taken.</b>`, true);
+    hint(`<b>Tap the map where photo #${i + 1} was taken.</b>`, true);
   }
 
   async function onMapClick(e) {
@@ -762,38 +815,69 @@
   function scoreTiles() {
     return `<div class="tiles">${A.d.scores.map((t, i) => `
       <div class="stat" style="--c:${esc(t.color)}">
-        <div class="row" style="justify-content:space-between"><b>${i + 1}. ${esc(t.name)}</b><span class="small muted">${t.players} players</span></div>
-        <div class="v">${t.score} <span class="small muted" style="font-weight:400">pts</span></div>
+        <div class="st-name"><b>${i + 1}. ${esc(t.name)}</b> <span class="small muted">${t.players} players</span></div>
+        <div class="v">${t.score} <span class="small muted">pts</span></div>
         <div class="counts">${[1, 2, 3].map((d) => `<span><span class="bullet d${d}">${'EMH'[d - 1]}</span>${t.by_diff[d - 1]}</span>`).join('')}<span class="muted">${t.found} found</span></div>
       </div>`).join('')}</div>`;
   }
 
+  // The Live tab is a set of sections that are put in order for the phase of the game: what needs the host
+  // right now comes first. A phone gets one column; a computer gets two. Sections are moved, never rebuilt,
+  // so the map, what's typed and what's open all stay put. Rarely used sections fold to a one-line summary.
+  const LIVE_ORDER = {
+    setup: { phone: ['ctl', 'teams', 'players', 'msg', 'tv', 'map', 'scores', 'judge', 'feed'], wide: [['ctl', 'teams', 'players'], ['msg', 'tv', 'map', 'scores', 'judge', 'feed']] },
+    live: { phone: ['judge', 'msg', 'scores', 'map', 'players', 'feed', 'tv', 'ctl', 'teams'], wide: [['judge', 'feed'], ['scores', 'msg', 'map', 'players', 'tv', 'ctl', 'teams']] },
+    ended: { phone: ['ctl', 'judge', 'feed', 'scores', 'msg', 'tv', 'map', 'players', 'teams'], wide: [['ctl', 'judge', 'feed'], ['scores', 'tv', 'msg', 'map', 'players', 'teams']] },
+    revealed: { phone: ['ctl', 'tv', 'scores', 'feed', 'msg', 'map', 'players', 'judge', 'teams'], wide: [['ctl', 'tv', 'scores', 'feed'], ['msg', 'map', 'players', 'judge', 'teams']] },
+  };
+  const OPEN_AT = { setup: ['players'], live: [], ended: [], revealed: ['tv'] }; // folded sections that start open
+  const wideMQ = matchMedia('(min-width: 1000px)');
+  const onWide = () => { if (A.tab === 'live' && $('#liveRoot')) arrangeLive(false); };
+  if (wideMQ.addEventListener) wideMQ.addEventListener('change', onWide); else wideMQ.addListener(onWide);
+  const phaseOf = (g) => g.status === 'setup' ? 'setup' : g.status === 'ended' ? (g.revealed_at ? 'revealed' : 'ended') : 'live';
+  function arrangeLive(full) {
+    const phase = phaseOf(A.d.game), wide = wideMQ.matches;
+    if (!full && A.livePhase === phase && A.liveWide === wide) return;
+    if (!full) { // never move a field someone is typing in; try again on the next redraw
+      const ae = document.activeElement;
+      if (ae && $('#liveRoot').contains(ae) && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)) return;
+    }
+    if (A.livePhase !== phase || !A.liveOpen) A.liveOpen = Object.fromEntries(['players', 'feed', 'tv'].map((k) => [k, OPEN_AT[phase].includes(k)]));
+    A.livePhase = phase; A.liveWide = wide;
+    const o = LIVE_ORDER[phase];
+    (wide ? o.wide : [o.phone, []]).forEach((list, i) => {
+      const col = $(i ? '#lcolB' : '#lcolA');
+      list.forEach((k) => { const el = document.querySelector(`#liveRoot [data-sec="${k}"]`); if (el) col.appendChild(el); });
+    });
+    $('#liveRoot').classList.toggle('wide', wide);
+    document.querySelectorAll('#liveRoot details[data-sec]').forEach((d) => { d.open = !!A.liveOpen[d.dataset.sec]; });
+    if (A.maps.live) A.maps.live.invalidateSize();
+  }
+  const setText = (sel, t) => { const el = $(sel); if (el && el.textContent !== t) el.textContent = t; };
+
   function renderLive(full) {
     if (full || !$('#liveRoot')) {
-      $('#body').innerHTML = `<div id="liveRoot">
-        <div id="tiles"></div>
-        <div class="cols">
-          <div class="stack">
-            <div class="card"><div class="row" style="align-items:flex-start;gap:1em">
-              <div class="grow stack" id="controls"></div>
-              <div style="width:130px;text-align:center"><div class="qr">${qrSvg(playerUrl)}</div><button class="btn-small" id="tvBtn" style="margin-top:.4em;width:100%">Big join code</button><a class="btn btn-small" href="/tv" target="_blank" style="margin-top:.3em;width:100%">📺 Live TV view</a></div>
-            </div></div>
-            <div class="card"><h2>📣 Send a message</h2><p class="small muted" style="margin:-.2em 0 .5em">Pops up with a buzz. <b>Everyone</b> also shows it on the TV; a single team's message goes only to that team's phones.</p>
-              <div class="row" style="gap:.4em;margin-bottom:.4em"><label class="small" for="annTo">To</label><select id="annTo" class="grow"></select></div>
-              <div class="row" style="gap:.3em;margin-bottom:.4em">${["Head back to home base now 🏠", "15 minutes left!", "Dinner's ready! Come back 🦃"].map((t) => `<button class="btn-small" data-ann="${esc(t)}">${esc(t)}</button>`).join('')}</div>
-              <div class="row"><input id="annText" maxlength="200" placeholder="Type a message…" class="grow"><button class="btn-primary btn-small" id="annSend">Send</button></div>
-              <div id="annLast" class="small" style="margin-top:.4em"></div></div>
-            <div class="card" id="tvCard"></div>
-            <div class="card"><h2>Judge queue <span class="count" id="jCount">0</span></h2><p class="small muted" style="margin:-.2em 0 .6em">Players never see yes or no until you reveal the results.</p><div id="judge"></div><div id="farList"></div></div>
-            <div class="card"><h2>Every photo sent <span class="count" id="fCount"></span></h2><p class="small muted" style="margin:-.2em 0 .5em">Change any call at any time with Yes, No, or Reset (back to what the GPS said).</p>
-              <div class="filters" id="fFilters" style="margin:0 0 .5em"></div><div id="manual"></div><div class="feed" id="feed"></div></div>
-          </div>
-          <div class="stack">
-            <div class="card"><h2>Where everyone is</h2><div id="liveMap"></div></div>
-            <div class="card" id="teamCard"></div>
-            <div class="card"><h2>Players <span class="count" id="pCount">0</span></h2><div id="players"></div></div>
-          </div>
+      $('#body').innerHTML = `<div id="liveRoot" class="live">
+        <div class="lcol stack" id="lcolA"></div><div class="lcol stack" id="lcolB"></div>
+        <div class="hidden">
+          <section class="card sec" data-sec="ctl"><div class="stack" id="controls"></div>
+            <div class="join-box"><div class="qr">${qrSvg(playerUrl)}</div><div class="stack"><button class="btn-small" id="tvBtn">Big join code</button><a class="btn btn-small" href="/tv" target="_blank">Open TV view</a></div></div></section>
+          <section class="card sec" data-sec="judge"><h2>Judge queue <span class="count" id="jCount">0</span></h2><div id="judge"></div><div id="farList"></div></section>
+          <section class="card sec stack" data-sec="msg"><h2>Send a message</h2>
+            <div class="field-row"><label for="annTo">To</label><select id="annTo" class="grow"></select></div>
+            <div class="row">${["Head back to home base now 🏠", "15 minutes left!", "Dinner's ready! Come back 🦃"].map((t) => `<button class="btn-small" data-ann="${esc(t)}">${esc(t)}</button>`).join('')}</div>
+            <div class="field-row"><input id="annText" maxlength="200" placeholder="Type a message…" class="grow" aria-label="Message"><button class="btn-primary" id="annSend">Send</button></div>
+            <div id="annLast"></div></section>
+          <section class="sec" data-sec="scores"><div id="tiles"></div></section>
+          <section class="card sec" data-sec="map"><h2>Where everyone is</h2><div id="liveMap"></div></section>
+          <section class="card sec stack" data-sec="teams" id="teamCard"></section>
+          <details class="card sec fold" data-sec="players"><summary><h2>Players <span class="count" id="pCount">0</span></h2><span class="sum" id="pSum"></span></summary><div id="players"></div></details>
+          <details class="card sec fold" data-sec="feed"><summary><h2>Every photo sent <span class="count" id="fCount"></span></h2><span class="sum" id="fSum"></span></summary>
+            <div class="filters" id="fFilters"></div><div id="manual"></div><div class="feed" id="feed"></div></details>
+          <details class="card sec fold" data-sec="tv"><summary><h2>TV</h2><span class="sum" id="tvSum"></span></summary><div id="tvCard"></div></details>
         </div></div>`;
+      document.querySelectorAll('#liveRoot details[data-sec]').forEach((d) => d.addEventListener('toggle', () => { if (A.liveOpen) A.liveOpen[d.dataset.sec] = d.open; }));
+      arrangeLive(true); // place the sections before the map is made, so it gets its real size
       $('#tvBtn').onclick = tv;
       document.querySelectorAll('[data-ann]').forEach((b) => b.onclick = () => { $('#annText').value = b.dataset.ann; $('#annText').focus(); });
       const sendAnn = async () => {
@@ -817,6 +901,7 @@
       const h = A.d.game.home;
       if (h) L.marker([h.lat, h.lng], { icon: homeIcon(), interactive: false, zIndexOffset: -50 }).addTo(m);
     }
+    arrangeLive(false); // the phase changed (or the window got wider): reorder the sections
     const { game, players, finds, teams, photos } = A.d;
     const busy = document.activeElement && ['SELECT', 'INPUT'].includes(document.activeElement.tagName);
     // Only redraw a section when its content changed, so buttons don't move under the mouse.
@@ -834,7 +919,7 @@
         ...(ann ? [{ at: ann.at, html: `<b>Everyone</b>`, text: ann.text, del: 'all' }] : []),
         ...msgs.slice(0, 8).map((m) => ({ at: m.at, html: tName(m.team_id), text: m.text, del: m.id })),
       ].sort((a, b) => b.at - a.at);
-      $('#annLast').innerHTML = rows.map((r) => `<div class="row" style="gap:.4em;align-items:baseline;margin-top:.25em"><span class="grow"><span class="muted">${hm(r.at)} to</span> ${r.html}: “${esc(r.text)}”</span><button class="btn-small" data-anndel="${esc(r.del)}">Take down</button></div>`).join('');
+      $('#annLast').innerHTML = rows.map((r) => `<div class="line-row"><span class="grow"><span class="small muted">${hm(r.at)} to</span> ${r.html}: “${esc(r.text)}”</span><button class="btn-small" data-anndel="${esc(r.del)}">Take down</button></div>`).join('');
       document.querySelectorAll('[data-anndel]').forEach((b) => b.onclick = async () => {
         b.disabled = true;
         if (b.dataset.anndel === 'all') await api('/game', 'PATCH', { announce: null }); else await api('/messages/' + b.dataset.anndel, 'DELETE');
@@ -847,20 +932,20 @@
     const tvs = game.tv || {};
     if (changed('tv', JSON.stringify([tvs, game.revealed_at]))) {
       const TV_OPTS = [
-        ['noSpoilers', 'No spoilers', 'Hide points, right/wrong and distances until you reveal the results.'],
-        ['players', 'Players on the map', 'Show where each player is. Off: nobody\'s location is shown.'],
-        ['names', 'Names next to players', 'Only when players are on the map.'],
-        ['trails', 'Walking trails', 'Draw the path each player has walked.'],
-        ['spots', 'Photo spots on the map', 'Shows where every hunt photo is. Careful: anyone looking at the TV could peek!'],
-        ['popups', 'Pop up new photos', 'Show each new photo big on the screen (no right/wrong while No spoilers is on).'],
-        ['joinCode', 'Join code in the corner', 'A small QR code during the game for anyone who arrives late.'],
-        ['sound', 'Sound', 'A chime for new photos and music for the final reveal.'],
+        ['noSpoilers', 'No spoilers', 'Hides points and right/wrong until you reveal the results.'],
+        ['players', 'Players on the map', ''],
+        ['names', 'Names next to players', ''],
+        ['trails', 'Walking trails', ''],
+        ['spots', 'Photo spots on the map', 'Careful: anyone looking at the TV could peek.'],
+        ['popups', 'Pop up new photos', ''],
+        ['joinCode', 'Join code in the corner', ''],
+        ['sound', 'Sound', ''],
       ];
-      $('#tvCard').innerHTML = `<h2>📺 TV</h2>
-        <p class="small muted" style="margin:-.2em 0 .5em">Open <b>${esc(location.host)}/tv</b> on the TV (no password needed) and click the screen once for sound and full screen. Change everything else here.</p>
-        <div class="stack" style="gap:.45em">${TV_OPTS.map(([k, label, help]) => `<label class="rt-toggle"><input type="checkbox" data-tv="${k}" ${tvs[k] ? 'checked' : ''}><span><b>${label}</b><br><span class="small muted">${help}</span></span></label>`).join('')}</div>
-        <div class="row" style="margin-top:.6em"><span class="small">Results show speed</span>${[1, 2, 4].map((x) => `<button class="btn-small ${(tvs.speed || 1) === x ? 'btn-primary' : ''}" data-tvspeed="${x}">${x}×</button>`).join('')}</div>
-        <div class="row" style="margin-top:.5em">${game.revealed_at ? '<button class="btn-small" data-tvcmd="replay">🏆 Show the results again</button><button class="btn-small" data-tvcmd="skip">⏭ Skip to the winner</button>' : ''}<button class="btn-small" data-tvcmd="close">🗺 Back to the map</button></div>`;
+      $('#tvCard').innerHTML = `
+        <p class="small muted">On the TV, open <b>${esc(location.host)}/tv</b> and click the screen once for sound and full screen.</p>
+        <div class="toggles">${TV_OPTS.map(([k, label, help]) => `<label class="rt-toggle"><input type="checkbox" data-tv="${k}" ${tvs[k] ? 'checked' : ''}><span><b>${label}</b>${help ? `<br><span class="small muted">${help}</span>` : ''}</span></label>`).join('')}</div>
+        <div class="field-row"><span>Results speed</span>${[1, 2, 4].map((x) => `<button class="btn-small ${(tvs.speed || 1) === x ? 'btn-primary' : ''}" data-tvspeed="${x}">${x}×</button>`).join('')}</div>
+        <div class="row">${game.revealed_at ? '<button class="btn-small" data-tvcmd="replay">Show the results again</button><button class="btn-small" data-tvcmd="skip">Skip to the winner</button>' : ''}<button class="btn-small" data-tvcmd="close">Back to the map</button></div>`;
       const saveTv = async (patch) => { try { await api('/game', 'PATCH', { tv: patch }); } finally { await refresh(); A.sig.tv = null; render(); } };
       document.querySelectorAll('[data-tv]').forEach((c) => c.onchange = () => {
         c.blur();
@@ -874,33 +959,34 @@
       });
     }
 
+    setText('#tvSum', [tvs.noSpoilers ? 'No spoilers' : 'Spoilers shown', tvs.players ? 'players on map' : 'players hidden', ...(tvs.spots ? ['photo spots shown'] : []), tvs.sound ? 'sound on' : 'sound off'].join(' · '));
+
     const waiting = finds.filter((f) => f.status === 'pending').length;
     const tutOn = game.tutorial_at && A.d.now - game.tutorial_at < 125000; // the demo runs about two minutes
     if (changed('controls', game.status + '|' + game.ends_at + '|' + game.revealed_at + '|' + waiting + '|' + tutOn + '|' + game.random_teams + game.teams_ready)) {
       $('#controls').innerHTML = game.status === 'setup' ? `
         <h2>Ready to start?</h2>
-        <p class="small muted" style="margin:0"><span id="joinedLine"></span> Scan the code to join.</p>
-        ${game.random_teams && !game.teams_ready ? '<p class="small" style="margin:0">🎲 Shuffle and reveal the teams (below) before you start.</p>' : ''}
-        <div><label for="mins" class="small">Game length in minutes (optional)</label><input id="mins" type="number" min="5" placeholder="No timer"></div>
+        <p class="muted" id="joinedLine"></p>
+        ${game.random_teams && !game.teams_ready ? '<p>Shuffle and reveal the teams before you start.</p>' : ''}
+        <div><label for="mins">Game length in minutes (optional)</label><input id="mins" type="number" min="5" placeholder="No timer"></div>
         <button class="btn-ok btn-big" id="startBtn">▶ Start the game</button>`
         : game.status === 'starting' ? `
         <h2>Starting…</h2>
-        <p class="small muted" style="margin:0">Everyone's phone and the TV are counting down from 10. The hunt opens at ${new Date(game.started_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })}.</p>
+        <p class="muted">Phones and the TV are counting down. The hunt opens at ${new Date(game.started_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })}.</p>
         <button class="btn-big btn-bad" id="endBtn">■ Stop</button>`
         : game.status === 'live' ? `
-        <h2>The game is live</h2>
-        <p class="small muted" style="margin:0">${game.ends_at ? `Ends at ${new Date(game.ends_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.` : 'No timer. End it when everyone is back.'}</p>
+        <h2>Game</h2>
+        <p class="muted">${game.ends_at ? `Ends at ${new Date(game.ends_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.` : 'No timer. End it when everyone is back.'}</p>
         <button class="btn-big btn-bad" id="endBtn">■ End the game</button>`
         : !game.revealed_at ? `
         <h2>The game is over</h2>
-        <p class="small muted" style="margin:0">Players can't see the results yet.${waiting ? ` <b class="error">${waiting} still waiting for the judge</b>, and they won't count unless approved.` : ''} Photos taken before the end can still arrive for 30 minutes.</p>
-        <button class="btn-ok btn-big" id="revealBtn">🎉 Reveal the results</button>
+        <p class="muted">${waiting ? `<b class="error">${waiting} still waiting for the judge.</b> They won't count unless approved. ` : ''}Photos taken before the end can still arrive for 30 minutes.</p>
+        <button class="btn-ok btn-big" id="revealBtn">Reveal the results</button>
         <div class="row"><button class="btn-small" id="reopenBtn">Reopen the game</button><button class="btn-small btn-bad" id="resetBtn">↺ Reset the game</button></div>`
-        : `<h2>Results revealed</h2>
-        <p class="small muted" style="margin:0">Everyone can see the scores and what counted, on their phones and the TV.</p>
+        : `<h2>Game</h2>
         <button class="btn-big btn-bad" id="resetBtn">↺ Reset and play again</button>
         <div class="row"><button class="btn-small" id="hideBtn">Hide the results again</button><button class="btn-small" id="reopenBtn">Reopen the game</button></div>`;
-      $('#controls').innerHTML += `<div class="row tut-row"><button class="btn-small" id="tutBtn">📺 ${tutOn ? 'Play How to play again' : 'Play How to play on the TV'}</button>${tutOn ? '<button class="btn-small" id="tutStop">■ Stop it</button>' : ''}</div>`;
+      $('#controls').innerHTML += `<div class="row tut-row"><button class="btn-small" id="tutBtn">${tutOn ? 'Play How to play again' : 'Play How to play on the TV'}</button>${tutOn ? '<button class="btn-small" id="tutStop">■ Stop it</button>' : ''}</div>`;
       const act = (btn, body, ask, after) => btn && (btn.onclick = async () => {
         if (ask && !confirm(ask)) return;
         btn.disabled = true;
@@ -921,22 +1007,25 @@
     // Judge queue
     const pending = finds.filter((f) => f.status === 'pending');
     $('#jCount').textContent = pending.length; $('#jCount').classList.toggle('hot', pending.length > 0);
-    if (changed('judge', pending.map((f) => f.id).join())) $('#judge').innerHTML = pending.length ? pending.map((f) => {
+    // A long queue shows the first few, so the rest of the page stays close; "Show all" opens the rest.
+    const JMAX = 3, jShown = A.judgeAll ? pending : pending.slice(0, JMAX);
+    if (changed('judge', pending.map((f) => f.id).join() + '|' + !!A.judgeAll)) $('#judge').innerHTML = pending.length ? jShown.map((f) => {
       const p = photoOf(f.photo_id), t = teamOf(f.team_id), pl = playerOf(f.player_id);
       return `<div class="judge-item">
         <div class="judge-pics"><figure><a href="/img/${esc(p?.image_key)}" target="_blank"><img src="/img/${esc(p?.thumb_key)}"></a><figcaption>#${numOf(f.photo_id)} · the photo</figcaption></figure>
           <figure>${f.proof_key ? `<a href="/img/${esc(f.proof_key)}" target="_blank"><img src="/img/${esc(f.proof_key)}"></a>` : '<div class="nopic">No picture</div>'}<figcaption>their picture</figcaption></figure></div>
         <p class="small" style="margin:.2em 0 .5em"><span class="swatch" style="background:${esc(t?.color)}"></span> <b>${esc(pl?.name || '?')}</b> (${esc(t?.name)}) · ${Math.round(f.distance_m)} m from the spot · GPS ±${Math.round(f.accuracy_m || 0)} m</p>
-        <div class="row"><button class="btn-ok grow" data-judge="${f.id}" data-s="approved">✓ Approve</button><button class="btn-bad grow" data-judge="${f.id}" data-s="rejected">✕ Reject</button></div></div>`;
-    }).join('') : '<p class="muted small" style="margin:0">Nothing to judge right now.</p>';
+        <div class="row"><button class="btn-big btn-ok grow" data-judge="${f.id}" data-s="approved">✓ Approve</button><button class="btn-big btn-bad grow" data-judge="${f.id}" data-s="rejected">✕ Reject</button></div></div>`;
+    }).join('') + (pending.length > JMAX ? `<button class="btn-small" id="judgeMore">${A.judgeAll ? 'Show fewer' : `Show all ${pending.length}`}</button>` : '') : '<p class="muted">Nothing to judge right now.</p>';
+    const jm = $('#judgeMore'); if (jm) jm.onclick = () => { A.judgeAll = !A.judgeAll; render(); };
     // Answers taken far from the spot are marked "no" automatically. The judge can still approve one.
     const far = finds.filter((f) => f.status === 'far');
     const farOpen = !!$('#farList details')?.open; // keep it open when a new one arrives
-    if (changed('far', far.map((f) => f.id).join())) $('#farList').innerHTML = far.length ? `<details style="margin-top:.8em" ${farOpen ? 'open' : ''}><summary class="small" style="cursor:pointer"><b>Marked no, too far away (${far.length})</b> <span class="muted">· check these if GPS was bad</span></summary>${far.map((f) => {
+    if (changed('far', far.map((f) => f.id).join())) $('#farList').innerHTML = far.length ? `<details class="mini" ${farOpen ? 'open' : ''}><summary><b>Marked no, too far away (${far.length})</b> <span class="small muted">check these if GPS was bad</span></summary>${far.map((f) => {
       const p = photoOf(f.photo_id), t = teamOf(f.team_id), pl = playerOf(f.player_id);
       return `<div class="judge-item"><div class="judge-pics"><figure><a href="/img/${esc(p?.image_key)}" target="_blank"><img src="/img/${esc(p?.thumb_key)}" loading="lazy"></a><figcaption>#${numOf(f.photo_id)} · the photo</figcaption></figure>
         <figure>${f.proof_key ? `<a href="/img/${esc(f.proof_key)}" target="_blank"><img src="/img/${esc(f.proof_key)}" loading="lazy"></a>` : '<div class="nopic">No picture</div>'}<figcaption>their picture</figcaption></figure></div>
-        <p class="small" style="margin:.2em 0 .5em"><span class="swatch" style="background:${esc(t?.color)}"></span> <b>${esc(pl?.name || '?')}</b> (${esc(t?.name)}) · ${Math.round(f.distance_m)} m from the spot · GPS ±${Math.round(f.accuracy_m || 0)} m</p>
+        <p class="small"><span class="swatch" style="background:${esc(t?.color)}"></span> <b>${esc(pl?.name || '?')}</b> (${esc(t?.name)}) · ${Math.round(f.distance_m)} m from the spot · GPS ±${Math.round(f.accuracy_m || 0)} m</p>
         <button class="btn-ok btn-small" data-judge="${f.id}" data-s="approved">✓ Approve anyway</button></div>`;
     }).join('')}</details>` : '';
     document.querySelectorAll('[data-judge]').forEach((b) => b.onclick = async () => {
@@ -955,17 +1044,17 @@
       const warn = !adults ? 'No adults marked yet: tick "Adult" next to their names below.'
         : adults < n ? `<b class="error">Only ${adults} adult${adults > 1 ? 's' : ''} for ${n} teams</b>, so ${n - adults} team${n - adults > 1 ? 's' : ''} won't have one. Mark more adults or use fewer teams.`
         : `${adults} adults marked: every team gets at least one.`;
-      card.innerHTML = `<h2>🎲 Random teams</h2>
-        <label class="rt-toggle"><input type="checkbox" id="rtOn" ${game.random_teams ? 'checked' : ''}><span><b>Pick the teams at random</b><br><span class="small muted">Players join without choosing a team and can't switch. You shuffle, then reveal who's on which team.</span></span></label>
+      card.innerHTML = `<h2>Random teams</h2>
+        <label class="rt-toggle"><input type="checkbox" id="rtOn" ${game.random_teams ? 'checked' : ''}><span><b>Pick the teams at random</b><br><span class="small muted">Players can't choose a team. You shuffle, then reveal.</span></span></label>
         ${game.random_teams ? `
-        <div class="row" style="margin:.6em 0 .3em"><span class="small">Number of teams</span><button class="btn-small" id="tcMinus" ${n <= 2 ? 'disabled' : ''}>−</button><b style="min-width:1.4em;text-align:center">${n}</b><button class="btn-small" id="tcPlus" ${n >= 8 ? 'disabled' : ''}>+</button>
+        <div class="field-row"><span>Teams</span><button class="btn-small" id="tcMinus" ${n <= 2 ? 'disabled' : ''} aria-label="Fewer teams">−</button><b class="num">${n}</b><button class="btn-small" id="tcPlus" ${n >= 8 ? 'disabled' : ''} aria-label="More teams">+</button>
           <span class="small muted">${players.length ? `about ${Math.floor(players.length / n)}${players.length % n ? `–${Math.ceil(players.length / n)}` : ''} per team` : ''}</span></div>
-        <p class="small" style="margin:0 0 .5em">${warn}</p>
-        <div class="row"><button class="btn-primary btn-small" id="shuffleBtn" ${players.length < 2 ? 'disabled' : ''}>🎲 ${game.teams_at ? 'Shuffle again' : 'Shuffle teams'}</button>
-          ${game.teams_at && !game.teams_ready ? '<button class="btn-ok btn-small" id="showTeamsBtn">🎉 Reveal the teams</button>' : ''}</div>
-        <p class="small muted" style="margin:.5em 0 0">${!game.teams_at ? 'Everyone waits in the lobby until you shuffle and reveal. Anyone who joins after the shuffle goes to the smallest team.'
-          : !game.teams_ready ? 'Only you can see the teams (under Players). Shuffle again, move people by hand, or reveal them.'
-          : '✓ Everyone can see their team on their phone and the TV. Shuffling again hides the teams until you reveal again.'}</p>` : ''}`;
+        <p class="small">${warn}</p>
+        <div class="row"><button class="btn-primary btn-small" id="shuffleBtn" ${players.length < 2 ? 'disabled' : ''}>${game.teams_at ? 'Shuffle again' : 'Shuffle teams'}</button>
+          ${game.teams_at && !game.teams_ready ? '<button class="btn-ok btn-small" id="showTeamsBtn">Reveal the teams</button>' : ''}</div>
+        <p class="small muted">${!game.teams_at ? 'Everyone waits in the lobby until you shuffle and reveal. Late joiners go to the smallest team.'
+          : !game.teams_ready ? 'Only you can see the teams (under Players). Shuffle again, move people, or reveal them.'
+          : 'Everyone can see their team. Shuffling again hides the teams until you reveal again.'}</p>` : ''}`;
       $('#rtOn').onchange = async (e) => {
         const on = e.target.checked; e.target.blur();
         if (on && players.length && !confirm('Pick teams at random? The teams players chose are cleared, and they wait in the lobby until you shuffle and reveal.')) { e.target.checked = false; return; }
@@ -990,25 +1079,28 @@
     const offline = (p) => !p.last_seen_at || A.d.now - p.last_seen_at > 2 * 60000;
     const isOut = (p) => game.status === 'live' && p.last_lat != null && !insideArea(p.last_lat, p.last_lng, game.boundary);
     // Location status per phone, so problems show up in the lobby before the start.
-    const locTag = (p) => offline(p) ? `<span class="muted">· app closed ${p.last_seen_at ? ago(p.last_seen_at) : ''}</span>`
-      : p.loc_state === 'off' ? '<span class="loc-tag bad">📍 location off</span>'
-      : !p.loc_at ? '<span class="loc-tag warn">📍 no location yet</span>'
-      : A.d.now - p.loc_at > 3 * 60000 ? `<span class="loc-tag warn">📍 ${ago(p.loc_at)}</span>`
-      : isOut(p) ? '<span class="loc-tag bad">🚧 outside the area</span>'
-      : '<span class="loc-tag ok">📍 ok</span>';
+    const locTag = (p) => offline(p) ? `<span class="small muted">app closed ${p.last_seen_at ? ago(p.last_seen_at) : ''}</span>`
+      : p.loc_state === 'off' ? '<span class="loc-tag bad">location off</span>'
+      : !p.loc_at ? '<span class="loc-tag warn">no location yet</span>'
+      : A.d.now - p.loc_at > 3 * 60000 ? `<span class="loc-tag warn">location ${ago(p.loc_at)}</span>`
+      : isOut(p) ? '<span class="loc-tag bad">outside the area</span>'
+      : '<span class="small muted">location ok</span>';
     const locBad = players.filter((p) => !offline(p) && (p.loc_state === 'off' || !p.loc_at)).length;
+    const outN = players.filter((p) => !offline(p) && p.loc_state !== 'off' && p.loc_at && isOut(p)).length;
+    const offN = players.filter(offline).length;
+    setText('#pSum', [`${players.length} joined`, ...(locBad ? [`${locBad} no location`] : []), ...(outN ? [`${outN} outside`] : []), ...(offN ? [`${offN} app closed`] : [])].join(' · '));
     if (!busy && changed('players', JSON.stringify(players.map((p) => [p.id, p.team_id, p.name, locTag(p), p.adult])) + teams.map((t) => t.id + t.name).join() + game.random_teams + game.status)) {
       const groups = [...teams, ...(players.some((p) => !teams.some((t) => t.id === p.team_id)) ? [{ id: '', name: game.random_teams ? 'Waiting for the shuffle' : 'No team', color: '#bbb' }] : [])];
       const adultBox = (p) => game.random_teams && game.status === 'setup' ? `<label class="adult-box ${p.adult ? 'on' : ''}"><input type="checkbox" data-adult="${p.id}" ${p.adult ? 'checked' : ''}>Adult</label>` : (p.adult ? '<span class="small muted">adult</span>' : '');
       $('#players').innerHTML = players.length ? groups.map((t) => {
         const ps = players.filter((p) => t.id ? p.team_id === t.id : !teams.some((x) => x.id === p.team_id));
         if (!t.id && !ps.length) return '';
-        return `<div style="margin-bottom:.8em"><div class="row small" style="font-weight:700;margin-bottom:.3em"><span class="swatch" style="background:${esc(t.color)}"></span>${esc(t.name)} <span class="muted" style="font-weight:400">${ps.length}${game.random_teams && t.id ? ` · ${ps.filter((p) => p.adult).length} adult${ps.filter((p) => p.adult).length === 1 ? '' : 's'}` : ''}</span></div>` + ps.map((p) => `
-          <div class="row" style="padding:.2em 0 .2em 1.4em"><span class="grow small">${esc(p.name)} ${locTag(p)}</span>${adultBox(p)}
-          <select data-move="${p.id}" style="width:auto;min-height:32px;font-size:.8em;padding:.1em .4em">${t.id ? '' : '<option value="" selected>No team</option>'}${teams.map((tt) => `<option value="${tt.id}" ${tt.id === t.id ? 'selected' : ''}>${esc(tt.name)}</option>`).join('')}</select>
-          <button class="btn-small kick-btn" data-kick="${p.id}" title="Remove ${esc(p.name)} from the game">Remove</button></div>`).join('') + '</div>';
-      }).join('') + (locBad ? `<p class="note small" style="margin:.4em 0 0">📍 ${locBad} phone${locBad > 1 ? 's have' : ' has'} no location. Their screen shows a "Fix it" button with steps for their phone.</p>` : '')
-        : '<p class="muted small" style="margin:0">Nobody yet. Show the QR code.</p>';
+        return `<div class="pgroup"><div class="pgroup-h"><span class="swatch" style="background:${esc(t.color)}"></span>${esc(t.name)} <span class="small muted">${ps.length}${game.random_teams && t.id ? ` · ${ps.filter((p) => p.adult).length} adult${ps.filter((p) => p.adult).length === 1 ? '' : 's'}` : ''}</span></div>` + ps.map((p) => `
+          <div class="prow-p"><div class="pname"><b>${esc(p.name)}</b> ${locTag(p)}</div><div class="pctl">${adultBox(p)}
+          <select data-move="${p.id}" aria-label="Team for ${esc(p.name)}">${t.id ? '' : '<option value="" selected>No team</option>'}${teams.map((tt) => `<option value="${tt.id}" ${tt.id === t.id ? 'selected' : ''}>${esc(tt.name)}</option>`).join('')}</select>
+          <button class="btn-small btn-ghost btn-danger" data-kick="${p.id}" title="Remove ${esc(p.name)} from the game">Remove</button></div></div>`).join('') + '</div>';
+      }).join('') + (locBad ? `<p class="note small">${locBad} phone${locBad > 1 ? 's have' : ' has'} no location. Their screen shows a "Fix it" button with steps.</p>` : '')
+        : '<p class="muted">Nobody yet. Show the QR code.</p>';
       document.querySelectorAll('[data-kick]').forEach((b) => b.onclick = async () => {
         const pl = playerOf(b.dataset.kick), tm = teamOf(pl?.team_id);
         const sent = finds.filter((f) => f.player_id === b.dataset.kick).length;
@@ -1021,9 +1113,9 @@
     }
     // The hand-add panel is only rebuilt when teams or photos change, so it keeps what you picked.
     if (changed('manual', teams.map((t) => t.id + t.name).join() + photos.map((p) => p.id + p.title).join())) {
-      $('#manual').innerHTML = `<details style="margin-bottom:.5em"><summary class="small muted" style="cursor:pointer">Give a team a find by hand</summary><div class="row" style="margin:.5em 0">
-        <select id="mTeam" style="width:auto">${teams.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select>
-        <select id="mPhoto" style="width:auto">${photos.map((p, i) => `<option value="${p.id}">#${i + 1} ${esc(p.title || '')}</option>`).join('')}</select>
+      $('#manual').innerHTML = `<details class="mini"><summary>Give a team a find by hand</summary><div class="row">
+        <select id="mTeam" aria-label="Team">${teams.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select>
+        <select id="mPhoto" aria-label="Photo">${photos.map((p, i) => `<option value="${p.id}">#${i + 1} ${esc(p.title || '')}</option>`).join('')}</select>
         <button class="btn-small" id="mAdd">Add</button></div></details>`;
       $('#mAdd').onclick = async () => {
         const team = teamOf($('#mTeam').value), n = numOf($('#mPhoto').value);
@@ -1038,6 +1130,8 @@
     const inF = (f) => match(A.ff, f);
     A.ff ||= 'all';
     $('#fCount').textContent = finds.length;
+    { const nWait = finds.filter((f) => match('wait', f)).length, nYes = finds.filter((f) => match('yes', f)).length, nNo = finds.filter((f) => match('no', f)).length;
+      setText('#fSum', finds.length ? [`${nYes} counted`, ...(nWait ? [`${nWait} waiting`] : []), `${nNo} didn't count`].join(' · ') : 'None yet'); }
     if (changed('ffilters', A.ff + finds.map((f) => f.status).join())) {
       $('#fFilters').innerHTML = Object.entries(FILTERS).map(([k, v]) => `<button data-ff="${k}" class="${A.ff === k ? 'on' : ''}">${v} · ${finds.filter((f) => match(k, f)).length}</button>`).join('');
       document.querySelectorAll('[data-ff]').forEach((b) => b.onclick = () => { A.ff = b.dataset.ff; A.sig.feed = null; A.sig.ffilters = null; render(); });
@@ -1052,15 +1146,15 @@
         return `<div class="feed-item judge-row">
           <a href="/img/${esc(p?.image_key)}" target="_blank" title="The photo"><img src="/img/${esc(p?.thumb_key)}" alt="" loading="lazy"></a>
           ${f.proof_key ? `<a href="/img/${esc(f.proof_key)}" target="_blank" title="Their picture"><img src="/img/${esc(f.proof_key)}" alt="" loading="lazy"></a>` : '<span class="nopic-sm">No pic</span>'}
-          <div class="grow small"><b>${esc(pl?.name || 'Judge')}</b> <span class="swatch" style="background:${esc(t?.color)}"></span> ${esc(t?.name)} · #${numOf(f.photo_id)} <span class="muted">(${DIFF[p?.difficulty] || ''})</span><br>
-            <span class="tag ${f.status}">${label}</span> <span class="muted">${f.distance_m != null ? Math.round(f.distance_m * 3.28) + ' ft away · ' : ''}${ago(f.created_at)}</span></div>
+          <div class="grow"><b>${esc(pl?.name || 'Judge')}</b> <span class="swatch" style="background:${esc(t?.color)}"></span> ${esc(t?.name)} · #${numOf(f.photo_id)} <span class="small muted">(${DIFF[p?.difficulty] || ''})</span><br>
+            <span class="tag ${f.status}">${label}</span> <span class="small muted">${f.distance_m != null ? Math.round(f.distance_m * 3.28) + ' ft away · ' : ''}${ago(f.created_at)}</span></div>
           <div class="jbtns">
             <button class="btn-small ${yes ? 'on-yes' : ''}" data-flip="${f.id}" data-s="approved" ${yes ? 'disabled' : ''}>✓ Yes</button>
             <button class="btn-small ${no ? 'on-no' : ''}" data-flip="${f.id}" data-s="rejected" ${no ? 'disabled' : ''}>✕ No</button>
             ${canReset ? `<button class="btn-small" data-flip="${f.id}" data-s="reset" title="Back to what the GPS said">↺ Reset</button>` : ''}
           </div>
-          <button class="x-btn" data-fdel="${f.id}" title="Delete this photo">🗑</button></div>`;
-      }).join('') : `<p class="muted small" style="margin:0">${finds.length ? 'None here.' : 'No photos sent yet.'}</p>`;
+          <button class="btn-small btn-ghost x-btn" data-fdel="${f.id}" title="Delete this photo" aria-label="Delete this photo">🗑</button></div>`;
+      }).join('') : `<p class="muted">${finds.length ? 'None here.' : 'No photos sent yet.'}</p>`;
       document.querySelectorAll('[data-flip]').forEach((b) => b.onclick = async () => {
         b.closest('.feed-item').querySelectorAll('button').forEach((x) => { x.disabled = true; });
         try { await api('/finds/' + b.dataset.flip, 'PATCH', { status: b.dataset.s }); } finally { await refresh(); render(); }
@@ -1092,11 +1186,13 @@
     const proofs = finds.filter((f) => f.proof_key && (f.status === 'auto' || f.status === 'approved'));
     const g = A.d.game;
     $('#body').innerHTML = `
-      ${!g.revealed_at ? `<div class="note" style="margin-bottom:1em">🤫 <b>Players can't see these results yet.</b> ${g.status === 'ended' ? 'When the judge queue is clear, go to Live game and press <b>Reveal the results</b>.' : 'End the game first, then reveal them from the Live game tab.'}</div>` : ''}
-      ${winner ? `<div class="winner" style="background:${esc(winner.color)}"><h1>🏆 ${esc(winner.name)} ${g.revealed_at ? 'wins!' : 'is in the lead'}</h1><p style="margin:0">${winner.score} points · ${winner.found} photos found</p></div>` : ''}
-      <div class="row" style="margin-bottom:1em"><button class="btn-primary" id="winBtn">🏆 Show winner on TV</button><button id="csvBtn">⬇ Download results (CSV)</button></div>
+      <div class="stack res">
+      ${!g.revealed_at ? `<div class="note"><b>Players can't see these results yet.</b> ${g.status === 'ended' ? 'Clear the judge queue, then press Reveal results.' : 'End the game first, then reveal them.'}</div>` : ''}
+      ${winner ? `<div class="winner" style="background:${esc(winner.color)}"><h1>${esc(winner.name)} ${g.revealed_at ? 'wins!' : 'is in the lead'}</h1><p>${winner.score} points · ${winner.found} photos found</p></div>` : ''}
+      <div class="row"><button class="btn-small" id="winBtn">Show winner full screen</button><button class="btn-small" id="csvBtn">Download results (CSV)</button></div>
       ${scoreTiles()}
-      <div class="card"><h2>Proof photos <span class="count">${proofs.length}</span></h2><div class="gallery">${proofs.map((f) => { const t = teamOf(f.team_id); return `<figure><a href="/img/${esc(f.proof_key)}" target="_blank"><img src="/img/${esc(f.proof_key)}" loading="lazy"></a><figcaption><span class="swatch" style="background:${esc(t.color)}"></span> ${esc(playerOf(f.player_id)?.name || '')} · #${numOf(f.photo_id)}</figcaption></figure>`; }).join('') || '<p class="muted small">None yet.</p>'}</div></div>`;
+      <section class="card sec"><h2>Proof photos <span class="count">${proofs.length}</span></h2><div class="gallery">${proofs.map((f) => { const t = teamOf(f.team_id); return `<figure><a href="/img/${esc(f.proof_key)}" target="_blank"><img src="/img/${esc(f.proof_key)}" loading="lazy"></a><figcaption><span class="swatch" style="background:${esc(t.color)}"></span> ${esc(playerOf(f.player_id)?.name || '')} · #${numOf(f.photo_id)}</figcaption></figure>`; }).join('') || '<p class="muted">None yet.</p>'}</div></section>
+      </div>`;
     $('#winBtn').onclick = () => {
       if (!winner) return;
       const o = document.createElement('div'); o.className = 'tv';
