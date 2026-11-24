@@ -255,19 +255,19 @@
   }
 
   // ---------- join ----------
-  function hero(title, sub) {
-    return `<div class="join-title"><div class="turkey">🦃</div><h1>${esc(title)}</h1>${sub ? `<p class="muted">${sub}</p>` : ''}</div>`;
+  function hero(title, sub, turkey) {
+    return `<div class="join-title">${turkey ? '<div class="turkey">🦃</div>' : ''}<h1>${esc(title)}</h1>${sub ? `<p class="muted">${sub}</p>` : ''}</div>`;
   }
 
   async function showJoin() {
     const app = $('#app');
     let info;
     try { info = await api('/api/game'); } catch (e) {
-      app.innerHTML = `<div class="screen stack">${hero('Photo Hunt')}<p class="note center">Can't reach the game. Check your signal.</p><button class="btn-primary btn-big" onclick="location.reload()">Try again</button></div>`;
+      app.innerHTML = `<div class="screen stack">${hero('Photo Hunt', '', true)}<p class="note">Can't reach the game. Check your signal.</p><button class="btn-primary btn-big" onclick="location.reload()">Try again</button></div>`;
       return;
     }
     if (!info.game) {
-      app.innerHTML = `<div class="screen stack">${hero('Photo Hunt', 'No game is set up yet. Check back soon!')}<button class="btn-big" onclick="location.reload()">Refresh</button></div>`;
+      app.innerHTML = `<div class="screen stack">${hero('Photo Hunt', 'No game is set up yet. Check back soon!', true)}<button class="btn-big" onclick="location.reload()">Refresh</button></div>`;
       return;
     }
     // Explain why this phone is back on the join screen.
@@ -277,14 +277,14 @@
     app.innerHTML = `
       <div class="screen stack">
         ${byeNote}
-        ${hero(info.game.name, 'Find the spots in the photos and snap a picture there. Harder photos are worth more. Results are revealed at the end!')}
-        <form id="nameForm" class="card stack">
+        ${hero(info.game.name, 'Find the spots in the photos and snap a picture there.', true)}
+        <form id="nameForm" class="join-form">
           <label for="name">Your first name</label>
           <input id="name" autocomplete="given-name" autocapitalize="words" maxlength="30" required placeholder="e.g. Mike">
           <button class="btn-primary btn-big">Next</button>
           <p id="joinErr" class="error"></p>
         </form>
-        <button class="btn-big" id="joinHow">❓ How to play</button>
+        <button class="btn-big join-how" id="joinHow">How to play</button>
       </div>`;
     $('#joinHow').onclick = () => showHowTo();
     $('#nameForm').onsubmit = async (ev) => {
@@ -314,14 +314,13 @@
   function pickTeam(name, info) {
     $('#app').innerHTML = `
       <div class="screen stack">
-        <h1>Hi ${esc(name)}!</h1>
-        <p class="muted">Pick your team.</p>
+        ${hero(`Hi ${name}!`, 'Pick your team.')}
         ${info.teams.map((t) => `
           <button class="team-btn" style="background:${esc(t.color)}" data-team="${esc(t.id)}">
             <span>${esc(t.name)}</span>
             <small>${t.members?.length ? esc(t.members.join(', ')) : 'No one yet'}</small>
           </button>`).join('')}
-        <button class="btn-ghost" id="back">← Back</button>
+        <button class="btn-ghost btn-small" id="back">← Back</button>
         <p id="joinErr" class="error"></p>
       </div>`;
     document.querySelectorAll('[data-team]').forEach((b) => b.onclick = () => finishJoin({ name, team_id: b.dataset.team }));
@@ -371,8 +370,8 @@
         ${hero('Location is blocked', 'Your phone didn\'t let the game see your location. Here\'s how to turn it on:')}
         <div class="card loc-help">${locSteps()}</div>
         <button class="btn-primary btn-big" id="locRetry">Try again</button>
-        <p class="loc-msg muted small center"></p>
-        <button class="btn-ghost" id="locSkip">Skip for now (you can't send photos without it)</button>
+        <p class="loc-msg muted small"></p>
+        <button class="btn-ghost btn-small" id="locSkip">Skip for now (you can't send photos without it)</button>
       </div>`;
     $('#locRetry').onclick = (ev) => retryLocation(ev.currentTarget, startGame);
     $('#locSkip').onclick = startGame;
@@ -501,9 +500,9 @@
     let o = $('#teamReveal');
     if (!o) { o = document.createElement('div'); o.id = 'teamReveal'; document.body.appendChild(o); }
     o.className = 'team-reveal'; o.style.background = t.color;
-    o.innerHTML = `<div class="tr-in"><p class="tr-small">The teams are in!</p><div class="tr-badge" style="color:${esc(t.color)}">${esc(t.name[0])}</div>
-      <h1>You're on the<br><span class="tr-team">${esc(t.name)} team!</span></h1>
-      ${mates.length ? `<p class="tr-small">You're with</p><div class="tr-mates">${mates.map((n) => `<span>${esc(n)}</span>`).join('')}</div>` : '<p class="tr-small">More teammates may join soon.</p>'}
+    o.innerHTML = `<div class="tr-in"><p class="tr-small">The teams are in!</p>
+      <h1>You're on the<br>${esc(t.name)} team!</h1>
+      ${mates.length ? `<p class="tr-mates">You're with <b>${mates.map((n) => esc(n)).join(', ')}</b></p>` : '<p class="tr-mates">More teammates may join soon.</p>'}
       <button class="btn-big" id="trOk">Let's go!</button></div>`;
     $('#trOk').onclick = () => o.remove();
     if (navigator.vibrate) navigator.vibrate([100, 60, 100, 60, 400]);
@@ -531,8 +530,8 @@
     if (!o) { o = document.createElement('div'); o.id = 'hostMsg'; o.className = 'sheet host-msg'; document.body.appendChild(o); }
     o.dataset.ids = S.shownMsgs.map((m) => m.id).join();
     const team = myTeam();
-    o.innerHTML = `<div class="panel stack center"><div class="hm-icon">📣</div>
-      ${S.shownMsgs.map((m) => `<div class="hm-one"><div class="small muted">${m.team ? `Just for ${team ? `<b style="color:${esc(team.color)}">${esc(team.name)}</b>` : 'your team'}` : 'Message from the host'} · ${timeText(m.at)}</div>
+    o.innerHTML = `<div class="panel stack"><div class="hm-icon">📣</div>
+      ${S.shownMsgs.map((m) => `<div class="hm-one"><div class="hm-from small muted">${m.team ? `Just for ${team ? `<b style="color:${esc(team.color)}">${esc(team.name)}</b>` : 'your team'}` : 'Message from the host'} · ${timeText(m.at)}</div>
         <p class="hm-text">${esc(m.text)}</p></div>`).join('')}
       <button class="btn-primary btn-big" id="hmOk">Got it</button></div>`;
     $('#hmOk').onclick = () => { o.remove(); S.shownMsgs = []; };
@@ -628,18 +627,16 @@
           </div>`;
         }).join('');
       html = `<div class="lob">
-        <div class="lob-top"><span class="grow">🦃 ${esc(g.name)}</span></div>
+        <div class="lob-top">🦃 ${esc(g.name)}</div>
         <div class="lob-hero">
-          <div class="lob-who"><div class="lob-badge" style="color:${esc(color)}">${esc(waitTeams ? '?' : (team?.name || '?')[0])}</div>
-            <p class="lob-you">${waitTeams ? `You're <b>${esc(me.name)}</b>. The host is picking the teams.` : `You're <b>${esc(me.name)}</b> on the <b>${esc(team?.name || '')}</b> team`}</p></div>
-          ${ls === 'ok' ? '<p class="lob-loc ok">📍 Location is on ✓</p>'
-            : ls === 'off' ? '<button class="lob-loc off" data-lochelp>📍 Location is off. Tap here to fix it</button>'
-            : '<button class="lob-loc" data-lochelp>📡 Finding your location… <u>Help</u></button>'}
           <h1>${waitTeams ? 'Waiting for the teams' : 'Waiting for everyone to join'}<span class="lob-dots"><i></i><i></i><i></i></span></h1>
+          <p class="lob-you">${waitTeams ? `You're <b>${esc(me.name)}</b>. The host is picking the teams.` : `You're <b>${esc(me.name)}</b> on the <b>${esc(team?.name || '')}</b> team`}</p>
+          ${ls === 'ok' ? '<p class="lob-loc">📍 Location is on</p>'
+            : ls === 'off' ? '<div class="lob-loc off"><span>📍 Location is off</span><button class="btn-small" data-lochelp>Fix it</button></div>'
+            : '<div class="lob-loc"><span>📡 Finding your location…</span><button class="btn-small" data-lochelp>Help</button></div>'}
         </div>
         <div class="lob-teams">${teamsHtml}</div>
-        <button class="lob-howbtn" data-howto>❓ How to play</button>
-        <p class="lob-foot">The hunt starts when the host presses Start. Keep this screen open.</p>
+        <button class="btn-big lob-howbtn" data-howto>How to play</button>
       </div>`;
     } else if (ph === 'countdown' || ph === 'go') {
       if ($('#sheet.tour')) $('#sheet').remove(); // the hunt is starting: put the how-to cards away so everyone sees the countdown
@@ -647,14 +644,14 @@
       sig = ph + (ph === 'go' ? '' : n) + color;
       html = ph === 'go'
         ? `<div class="cd"><div class="cd-n go">GO!</div><p>Happy hunting 🦃</p></div>`
-        : `<div class="cd"><p>Get ready!</p><div class="cd-n" key="${n}">${n}</div><p>The hunt starts in ${n} second${n === 1 ? '' : 's'}</p></div>`;
+        : `<div class="cd"><p>Get ready!</p><div class="cd-n" key="${n}">${n}</div></div>`;
       if (ph === 'go' && S.lastPh !== 'go' && navigator.vibrate) navigator.vibrate([150, 80, 300]);
     } else {
       const q = store.get('queue', []).length, h = g.home, hd = homeDist();
       sig = 'over' + q + (h ? h.lat + h.label : '') + (hd == null ? '' : Math.round(hd / 50));
       html = `<div class="cd over"><div class="cd-icon">🏁</div><h1>Game over!</h1><p>${h ? `Head back to <b>${esc(h.label)}</b>. ` : ''}See the results on the main screen.</p>
-        ${h ? `<p class="small">${hd != null ? `🏠 ${distText(hd)} away · ` : ''}<a href="${directionsUrl(h)}" target="_blank" rel="noopener" style="color:inherit">Walking directions</a></p>` : ''}
-        ${q ? `<p class="small">📶 Sending ${q} saved photo${q > 1 ? 's' : ''} when you have signal. Keep this open for a moment.</p>` : ''}</div>`;
+        ${q ? `<p class="small">📶 Sending ${q} saved photo${q > 1 ? 's' : ''} when you have signal. Keep this open for a moment.</p>` : ''}
+        ${h ? `${hd != null ? `<p class="small">🏠 ${distText(hd)} away</p>` : ''}<a class="btn btn-big" href="${directionsUrl(h)}" target="_blank" rel="noopener">Walking directions</a>` : ''}</div>`;
     }
     S.lastPh = ph;
     if (sig === S.screenSig) return;
@@ -751,8 +748,8 @@
       const c = cards[i], last = i === cards.length - 1;
       panel.innerHTML = `
         <div class="tour-top">
-          <div class="tour-parts">${TOUR_PARTS.map((p, k) => `<button data-part="${k}" class="${c.part === k ? 'on' : ''}" aria-pressed="${c.part === k}">${k + 1}. ${p}</button>`).join('')}</div>
-          <button class="tour-skip" data-skip>${last ? 'Close' : 'Skip'}</button>
+          <div class="tour-parts">${TOUR_PARTS.map((p, k) => `<button data-part="${k}" class="${c.part === k ? 'on' : ''}" aria-pressed="${c.part === k}">${p}</button>`).join('')}</div>
+          <button class="btn-ghost btn-small tour-skip" data-skip>${last ? 'Close' : 'Skip'}</button>
         </div>
         <div class="tour-card ${dir ? 'in-' + dir : ''}" aria-live="polite">
           <div class="ta" aria-hidden="true">${c.art}</div>
@@ -806,14 +803,14 @@
     const sent = t?.submitted ?? 0;
     // Before the reveal the header only shows how many photos the team has submitted.
     const line = revealed()
-      ? `<b>${t?.score ?? 0}</b><span>pts · ${rankText(S.data.teams.indexOf(t) + 1)} of ${S.data.teams.length}</span><span class="grow" style="text-align:right">${t?.found ?? 0} counted</span>`
-      : `<b>${sent}</b><span>of ${total} sent</span><span class="grow" style="text-align:right">🤫 points at the end</span>`;
+      ? `<span><b>${t?.score ?? 0} pts</b> · ${rankText(S.data.teams.indexOf(t) + 1)} of ${S.data.teams.length} · ${t?.found ?? 0} counted</span>`
+      : `<span><b>${sent}</b> of ${total} sent</span>`;
     top.innerHTML = `
       <div class="top">
-        <span class="team"><span class="bullet" style="background:${esc(t?.color)}">${esc((t?.name || '?')[0])}</span>${esc(t?.name)} team</span>
+        <span class="team"><span class="bullet" style="background:${esc(t?.color)}">${esc((t?.name || '?')[0])}</span><span class="tn">${esc(t?.name)} team</span></span>
         <span class="${S.offline ? 'clock over' : 'clock ' + cc}" id="clock">${S.offline ? 'No signal' : ct}</span>
-        <button class="text-btn" id="helpBtn" aria-label="How to play">?</button>
-        <button class="text-btn" id="bigBtn" aria-label="Bigger text">Aa</button>
+        <button class="btn-small text-btn" id="helpBtn" aria-label="How to play">?</button>
+        <button class="btn-small text-btn" id="bigBtn" aria-label="Bigger text">Aa</button>
       </div>
       <div class="score">${line}</div>
       <div class="progress"><span style="width:${total ? (100 * sent) / total : 0}%"></span></div>
@@ -837,10 +834,10 @@
     if (sig === S.locBarSig) return;
     S.locBarSig = sig;
     el.className = show ? 'loc-bar ' + st : out ? 'loc-bar out' : '';
-    el.innerHTML = out ? `<span>🚧 <b>You're outside the game area</b> (${distText(out)} past the orange line). No photos out here.</span><button>Map</button>`
+    el.innerHTML = out ? `<span>🚧 <b>You're outside the game area</b> (${distText(out)} past the orange line). No photos out here.</span><button class="btn-small">Map</button>`
       : !show ? '' : st === 'off'
-      ? '<span>📍 <b>Location is off.</b> Teammates can\'t see you and photos can\'t be sent.</span><button>Fix it</button>'
-      : '<span>📡 <b>Looking for your location…</b></span><button>Help</button>';
+      ? '<span>📍 <b>Location is off.</b> Teammates can\'t see you and photos can\'t be sent.</span><button class="btn-small">Fix it</button>'
+      : '<span>📡 <b>Looking for your location…</b></span><button class="btn-small">Help</button>';
     if (out) el.querySelector('button').onclick = () => { go('map'); setTimeout(() => { if (S.map && S.fix) S.map.fitBounds([...S.data.game.boundary, [S.fix.lat, S.fix.lng]], { padding: [20, 20] }); }, 200); };
     else if (show) el.querySelector('button').onclick = showLocHelp;
   }
@@ -853,14 +850,14 @@
     if (g.status === 'ended' && g.revealed) html += `<div class="note good">🏆 <b>The results are in!</b> See Scores.</div>`;
     const q = store.get('queue', []);
     if (q.length) html += `<div class="note">📶 ${q.length} photo${q.length > 1 ? 's' : ''} waiting for signal. We'll send ${q.length > 1 ? 'them' : 'it'} automatically.</div>`;
-    return html ? `<div class="stack" style="margin-bottom:1em">${html}</div>` : '';
+    return html ? `<div class="stack notes">${html}</div>` : '';
   }
 
   // Badge on a photo: "Submitted" during the game, then counted / didn't count after the reveal.
   function badge(f, queued) {
-    if (!f) return queued ? '<div class="badge wait"><span class="check">📶</span>Waiting for signal</div>' : '';
-    if (!revealed()) return `<div class="badge"><span class="check">✓</span>Sent by ${byWho(f)}</div>`;
-    return f.counted ? `<div class="badge"><span class="check">✓</span>Counted!</div>` : `<div class="badge no"><span class="check">✕</span>Didn't count</div>`;
+    if (!f) return queued ? '<div class="stamp wait"><span class="check">📶</span>Waiting for signal</div>' : '';
+    if (!revealed()) return `<div class="stamp"><span class="check">✓</span>Sent by ${byWho(f)}</div>`;
+    return f.counted ? `<div class="stamp"><span class="check">✓</span>Counted!</div>` : `<div class="stamp no"><span class="check">✕</span>Didn't count</div>`;
   }
 
   function tile(p) {
@@ -895,7 +892,7 @@
       : (S.diff ? `No ${DIFF[S.diff]} photos sent yet.` : 'Nothing sent yet. Get hunting!');
     el.innerHTML = `
       ${notes()}
-      <div class="seg" style="margin-bottom:.6em">
+      <div class="seg">
         <button data-f="todo" class="${S.filter === 'todo' ? 'on' : ''}">To find · ${todo.length}</button>
         <button data-f="done" class="${S.filter === 'done' ? 'on' : ''}">Sent · ${done.length}</button>
       </div>
@@ -904,15 +901,13 @@
         ${[1, 2, 3].map((d) => `<button data-d="${d}" class="${S.diff === d ? 'on' : ''}"><span class="bullet d${d}">${'EMH'[d - 1]}</span>${DIFF[d]}</button>`).join('')}
       </div>
       <div class="list-tools">
-        <span class="muted small">${list.length} photo${list.length === 1 ? '' : 's'}</span>
         <select id="sortSel" aria-label="Sort">
           <option value="num" ${S.sort === 'num' ? 'selected' : ''}>By number</option>
           <option value="easy" ${S.sort === 'easy' ? 'selected' : ''}>Easy first</option>
           <option value="hard" ${S.sort === 'hard' ? 'selected' : ''}>Hard first</option>
         </select>
       </div>
-      ${list.length ? `<div class="grid">${list.map(tile).join('')}</div>` : `<div class="empty">${empty}</div>`}
-      <p class="muted small center" style="margin-top:1.2em">Every team can find every photo. Easy 1 pt, Medium 2, Hard 3.<br>${revealed() ? 'Tap a photo to see if it counted.' : 'Nobody finds out what counted until the end.'}</p>`;
+      ${list.length ? `<div class="grid">${list.map(tile).join('')}</div>` : `<div class="empty">${empty}</div>`}`;
     el.querySelectorAll('[data-f]').forEach((b) => b.onclick = () => { S.filter = b.dataset.f; store.set('filter', S.filter); renderAll(true); });
     el.querySelectorAll('[data-d]').forEach((b) => b.onclick = () => { S.diff = Number(b.dataset.d); store.set('diff', S.diff); renderAll(true); });
     $('#sortSel').onchange = (e) => { S.sort = e.target.value; store.set('sort', S.sort); renderAll(true); };
@@ -946,18 +941,18 @@
     if (f && revealed()) action = f.counted ? `<div class="note good"><b>✓ Counted!</b> ${f.player_name ? 'Sent by ' + byWho(f) : 'Added by the judge'}.</div>` : `<div class="note"><b>✕ Didn't count.</b> Sent by ${byWho(f)}, but it wasn't the right spot.</div>`;
     else if (!f && queuedFor(p.id)) action = `<div class="note">📶 <b>Saved on your phone.</b> It will send by itself when you have signal.</div>`;
     else if (f) action = `<div class="note good"><b>✓ Sent</b> by ${byWho(f)} at ${timeText(f.created_at)}. You'll find out if it counted at the end.</div>
-      ${live ? '<button class="btn-ghost btn-big" id="againBtn">Wrong spot? Send it again</button>' : ''}`;
+      ${live ? '<button class="btn-ghost" id="againBtn">Wrong spot? Send it again</button>' : ''}`;
     else if (live) action = `<button class="btn-primary btn-big" id="foundBtn">📸 I found it! Take the picture</button>
-      <button class="btn-ghost btn-big" id="noPicBtn">Send without a picture</button>`;
+      <button class="btn-ghost" id="noPicBtn">Send without a picture</button>`;
     else action = `<div class="note info">${S.data.game.status === 'setup' ? 'You can send pictures once the game starts.' : 'The game is over.'}</div>`;
     el.innerHTML = `
-      <div class="detail-top"><button class="btn-small" id="backBtn">← Back to photos</button><span class="grow"></span>${diffTag(p.difficulty)}<b>${ptsText(p.points)}</b></div>
+      <div class="detail-top"><button class="btn-small" id="backBtn">← Back</button><span class="grow"></span>${diffTag(p.difficulty)}<b>${ptsText(p.points)}</b></div>
       ${f && f.proof ? `<div class="compare" id="compare">
           <figure><img src="${esc(p.image)}" alt="Photo ${numOf(p.id)}"><figcaption>The photo</figcaption></figure>
           <figure><img src="${esc(f.proof)}" alt="Your team's picture"><figcaption>Your team's picture${f.player_name ? ' · ' + esc(f.player_name) : ''}</figcaption></figure>
         </div>` : `<img class="full" src="${esc(p.image)}" alt="Photo ${numOf(p.id)}">`}
-      <h2 style="margin:.6em 0 .2em">#${numOf(p.id)}${p.title ? ' · ' + esc(p.title) : ''}</h2>
-      <p class="muted small">${f && f.proof ? 'Tap the pictures to see them bigger.' : 'Pinch the photo to zoom in.'}${others.length ? ` Also found by ${others.map((t) => esc(t.name)).join(', ')}.` : ''}</p>
+      <h2 class="detail-title">#${numOf(p.id)}${p.title ? ' · ' + esc(p.title) : ''}</h2>
+      ${(f && f.proof) || others.length ? `<p class="muted small">${f && f.proof ? 'Tap the pictures to see them bigger.' : ''}${others.length ? ` Also found by ${others.map((t) => esc(t.name)).join(', ')}.` : ''}</p>` : ''}
       ${p.hint ? `<div class="note info"><b>Hint:</b> ${esc(p.hint)}</div>` : ''}
       <div class="action stack">${action}</div>`;
     $('#backBtn').onclick = () => closeDetail();
@@ -1113,13 +1108,13 @@
       : '<div class="small muted">No players yet</div>';
     el.innerHTML = `
       ${winner ? `<div class="winner" style="background:${esc(winner.color)}"><h1>🏆 ${esc(winner.name)} team wins!</h1><p>${winner.score} points${S.data.teams[1]?.score === winner.score ? ' · tied, but got there first' : ''}</p></div>` : ''}
-      ${!show ? `<div class="note info" style="margin-bottom:1em">🤫 <b>Points are secret until the end.</b> ${g.status === 'ended' ? 'The results will be revealed at home base.' : 'For now you can see how many photos everyone has sent.'}</div>` : ''}
+      ${!show ? `<div class="note info notes">🤫 <b>Points are secret until the end.</b> ${g.status === 'ended' ? 'The results will be revealed at home base.' : 'For now you can see how many photos everyone has sent.'}</div>` : ''}
       <div class="card">
         <h2>${show ? 'Final scores' : 'Photos sent'}</h2>
         ${S.data.teams.map((t, i) => `
           <div class="score-row ${t.id === S.data.me.team_id ? 'me' : ''}">
             ${show ? `<span class="rank">${i + 1}</span>` : ''}
-            <span class="bullet" style="background:${esc(t.color)};font-size:1em">${esc(t.name[0])}</span>
+            <span class="bullet" style="background:${esc(t.color)}">${esc(t.name[0])}</span>
             <div class="grow">
               <b class="name">${esc(t.name)}</b>
               ${roster(t)}
@@ -1131,7 +1126,7 @@
             <span class="pts">${show ? t.score : t.submitted}<small>${show ? 'pts' : 'sent'}</small></span>
           </div>`).join('')}
       </div>
-      <p class="muted small center" style="margin-top:1em">Every team can find every photo. Most points wins.<br>Easy 1 pt, Medium 2, Hard 3. You're playing as <b>${esc(S.data.me.name)}</b>.</p>`;
+      <p class="muted small scores-foot">You're playing as <b>${esc(S.data.me.name)}</b>.</p>`;
   }
 
   // ---------- map ----------
