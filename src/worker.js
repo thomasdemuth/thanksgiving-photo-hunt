@@ -920,8 +920,8 @@ async function photoSets(request, env, parts, method) {
     return json({ sets: rows });
   }
 
-  const set = sid ? await env.DB.prepare('SELECT * FROM photo_sets WHERE id = ?').bind(sid).first() : null;
-  if (sid && !set) return json({ error: 'That photo set is gone. Refresh the page.' }, 404);
+  const set = sid && sid !== 'fresh' ? await env.DB.prepare('SELECT * FROM photo_sets WHERE id = ?').bind(sid).first() : null;
+  if (sid && sid !== 'fresh' && !set) return json({ error: 'That photo set is gone. Refresh the page.' }, 404);
 
   if (method === 'PATCH' && set && !parts[2]) {
     if (!cleanName) return json({ error: 'Give the set a name.' }, 400);
@@ -971,6 +971,30 @@ async function photoSets(request, env, parts, method) {
         .bind(game.boundary_geojson ?? null, game.home_lat ?? null, game.home_lng ?? null, game.home_label ?? null, now(), set.id),
     ]);
     return json({ ok: true, photos: n });
+  }
+
+  // Start a new set from scratch: save the game's photos, play area and home base under a name (a new set,
+  // or over the set with that name), then remove every photo from the game. Play area and home base stay.
+  if (method === 'POST' && sid === 'fresh') {
+    if (effectiveStatus(game) !== 'setup') return json({ error: 'You can only start a new set before the game starts. Reset the game on the Live tab first.' }, 400);
+    if (!cleanName) return json({ error: 'Give the set a name.' }, 400);
+    const n = await count();
+    if (!n) return json({ error: 'This game has no photos yet, so you are already starting from scratch.' }, 400);
+    const same = await env.DB.prepare('SELECT id FROM photo_sets WHERE lower(name) = lower(?)').bind(cleanName).first();
+    const setId = same ? same.id : id();
+    await env.DB.batch([
+      ...(same
+        ? [env.DB.prepare('DELETE FROM photo_set_items WHERE set_id = ?').bind(setId),
+          env.DB.prepare('UPDATE photo_sets SET boundary_geojson = ?, home_lat = ?, home_lng = ?, home_label = ?, updated_at = ? WHERE id = ?')
+            .bind(game.boundary_geojson ?? null, game.home_lat ?? null, game.home_lng ?? null, game.home_label ?? null, now(), setId)]
+        : [env.DB.prepare('INSERT INTO photo_sets (id, name, created_at, updated_at, boundary_geojson, home_lat, home_lng, home_label) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+            .bind(setId, cleanName, now(), now(), game.boundary_geojson ?? null, game.home_lat ?? null, game.home_lng ?? null, game.home_label ?? null)]),
+      copyIn(setId),
+      env.DB.prepare('DELETE FROM finds WHERE game_id = ?').bind(game.id),
+      env.DB.prepare('DELETE FROM photos WHERE game_id = ?').bind(game.id),
+    ]);
+    await bump(env, game.id);
+    return json({ ok: true, id: setId, saved: n, replaced: !!same });
   }
 
   // Replace the game's photos, play area and home base with the set's. Finds point at the old photos, so they go too.

@@ -327,7 +327,11 @@
           <button class="btn-small kick-btn" data-sdel="${esc(s.id)}">Delete</button>
         </div></div>`).join('') || '<p class="small muted">No sets saved yet.</p>'}
       ${d.sets.length && !canLoad ? '<p class="small muted" style="margin:.4em 0 0">Load works only before the game starts. Reset the game on the Live tab first.</p>' : ''}
-      <button class="btn-small" id="setNew" style="margin-top:.5em" ${photos.length ? '' : 'disabled'}>+ Save as new set…</button>
+      <div class="row" style="gap:.3em;margin-top:.5em">
+        <button class="btn-small" id="setNew" ${photos.length ? '' : 'disabled'}>+ Save as new set…</button>
+        <button class="btn-small btn-primary" id="setFresh" ${photos.length && canLoad ? '' : 'disabled'}>🆕 Start a new set…</button>
+      </div>
+      <p class="small muted" style="margin:.3em 0 0">Start a new set saves the photos here as a set, then clears them so you can add new ones. The play area and home base stay.${canLoad ? '' : ' Works only before the game starts.'}</p>
       <p class="small" id="setMsg" style="margin:.4em 0 0">${A.setMsg || ''}</p>`;
     A.setMsg = '';
     const byId = (sid) => d.sets.find((s) => s.id === sid);
@@ -339,6 +343,16 @@
       if (!name?.trim()) return;
       const r = await api('/sets', 'POST', { name: name.trim() });
       msg(`<b>Saved "${esc(name.trim())}"</b> with ${plural(r.photos, 'photo')}.`); renderSets();
+    };
+    $('#setFresh').onclick = async () => {
+      const name = prompt(`First, save the ${plural(photos.length, 'photo')} here as a set so you can load them again later. Name it:`, `Round ${d.sets.length + 1}`);
+      if (!name?.trim()) return;
+      const same = d.sets.find((s) => s.name.toLowerCase() === name.trim().toLowerCase());
+      if (same && !confirm(`There's already a set called "${same.name}" (${plural(same.photos, 'photo')}). Save over it?`)) return;
+      if (!confirm(`Start a new set?\n\n1. The ${plural(photos.length, 'photo')} here are saved as "${name.trim()}".\n2. Every photo is removed from this game${A.d.finds.length ? ', along with photos already sent' : ''}.\n\nThe play area and home base stay. Load "${name.trim()}" any time to get the photos back.`)) return;
+      const r = await api('/sets/fresh', 'POST', { name: name.trim() });
+      msg(`<b>Saved ${plural(r.saved, 'photo')} as "${esc(name.trim())}"</b> and cleared this game. Add the new set's photos below, then press "Save as new set".`);
+      await refresh(); renderSetup();
     };
     box.querySelectorAll('[data-sload]').forEach((b) => b.onclick = async () => {
       const s = byId(b.dataset.sload);
