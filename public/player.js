@@ -133,11 +133,12 @@
 
   // The browser's own answer, where it gives one: 'granted', 'denied' or 'prompt'. Also notices when the
   // player turns location back on in Settings, so the warning goes away by itself.
+  // Only a hint: Edge and DuckDuckGo (and other browsers built on the phone's web view) can say 'denied'
+  // when asking would work fine. Only a real "no" from a location call counts as blocked.
   async function watchPermission() {
     try {
       const st = await navigator.permissions.query({ name: 'geolocation' });
       S.perm = st.state;
-      if (st.state === 'denied') setLocDenied(true);
       st.onchange = () => {
         S.perm = st.state;
         if (st.state === 'denied') setLocDenied(true);
@@ -201,7 +202,7 @@
   // Every 15 s: make sure we're following the phone, and ask directly if nothing has come in lately.
   function locTick() {
     if (document.hidden || !navigator.geolocation || !S.token || S.locBusy) return;
-    if (S.locDenied && S.perm !== 'prompt' && S.perm !== 'granted') return; // blocked: wait for "Try again" or Settings
+    if (S.locDenied) return; // a real "no": wait for "Try again", or Settings (watchPermission notices)
     startWatch();
     if (!S.roughWarned && S.fix && S.fix.acc > 2000 && Date.now() - S.locSince > 20000 && !$('#sheet')) { S.roughWarned = true; showRoughLoc(); }
     const age = S.fix ? Date.now() - S.fix.at : Infinity;
@@ -222,11 +223,12 @@
   // ---------- location help (blocked, or opened inside another app) ----------
   const UA = navigator.userAgent;
   const isIOS = /iPhone|iPad|iPod/.test(UA) || (!/Android/.test(UA) && navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  const inAppBrowser = /FBAN|FBAV|FB_IAB|Instagram|Line\/|MicroMessenger|Snapchat|LinkedInApp|GSA\/|Twitter|; wv\)/i.test(UA);
+  // DuckDuckGo on Android is built on the same web view as in-app browsers ("wv"), but it's a real browser.
+  const inAppBrowser = !/DuckDuckGo|EdgA\/|EdgiOS/.test(UA) && /FBAN|FBAV|FB_IAB|Instagram|Line\/|MicroMessenger|Snapchat|LinkedInApp|GSA\/|Twitter|; wv\)/i.test(UA);
   // Which browser app this is, so the steps name the right one in the phone's Settings.
   const browserApp = isIOS
     ? (/CriOS/.test(UA) ? 'Chrome' : /FxiOS/.test(UA) ? 'Firefox' : /EdgiOS/.test(UA) ? 'Edge' : /OPiOS|OPT\//.test(UA) ? 'Opera' : /DuckDuckGo/.test(UA) ? 'DuckDuckGo' : 'Safari')
-    : (/SamsungBrowser/.test(UA) ? 'Samsung Internet' : /Firefox/.test(UA) ? 'Firefox' : /EdgA?\//.test(UA) ? 'Edge' : /OPR\//.test(UA) ? 'Opera'
+    : (/DuckDuckGo/.test(UA) ? 'DuckDuckGo' : /SamsungBrowser/.test(UA) ? 'Samsung Internet' : /Firefox/.test(UA) ? 'Firefox' : /EdgA?\//.test(UA) ? 'Edge' : /OPR\//.test(UA) ? 'Opera'
       : /Safari/.test(UA) && !/Chrome|Chromium|Android/.test(UA) ? 'Safari' : 'Chrome');
   const isDesktop = !isIOS && !/Android|Mobile/.test(UA);
   const deviceName = () => {
@@ -254,6 +256,7 @@
     const screenTime = '<li>Switches gray, or still blocked? Check <b>Settings</b> → <b>Screen Time</b> → <b>Content &amp; Privacy Restrictions</b> → <b>Location Services</b> → <b>Allow Changes</b>. A parent may need to do this.</li>';
     if (isIOS && browserApp !== 'Safari') return `<ol class="loc-steps"><li>Open the <b>Settings</b> app → <b>Privacy &amp; Security</b> → <b>Location Services</b>. Make sure it's <b>on</b>.</li>
       <li>On that same screen, scroll down to <b>${browserApp}</b> → <b>While Using the App</b>, and turn on <b>Precise Location</b>.</li>
+      <li>${browserApp} also remembers its own answer for this website. If it asks to use your location, tap <b>Allow</b>. If you tapped <b>Don't Allow</b> before, close this tab and open the link again.</li>
       ${screenTime}${tryAgainStep}</ol>`;
     if (isIOS) return `<ol class="loc-steps"><li>Open the <b>Settings</b> app → <b>Privacy &amp; Security</b> → <b>Location Services</b>. Make sure it's <b>on</b>.</li>
       <li>On that same screen, scroll down to <b>Safari Websites</b>, pick <b>While Using the App</b>, and turn on <b>Precise Location</b>.</li>
@@ -265,7 +268,9 @@
       <li>Click the icon to the left of the web address → <b>Location</b> → <b>Allow</b>.</li>
       ${tryAgainStep}</ol>`;
     return `<ol class="loc-steps"><li>Swipe down from the top of the screen and make sure <b>Location</b> is <b>on</b>.</li>
-      <li>Tap the icon to the left of the web address (⚙ or 🔒) → <b>Permissions</b> → <b>Location</b> → <b>Allow</b>.</li>
+      <li>${browserApp === 'Chrome' || browserApp === 'Samsung Internet'
+        ? 'Tap the icon to the left of the web address (⚙ or 🔒) → <b>Permissions</b> → <b>Location</b> → <b>Allow</b>.'
+        : `In ${browserApp}, open its menu (⋯ or ⋮) → <b>Settings</b> → <b>Site permissions</b> (or <b>Permissions</b>) → <b>Location</b>, and make sure this website isn't blocked.`}</li>
       <li>Still blocked? The browser itself may not be allowed. Open the <b>Settings</b> app → <b>Apps</b> → <b>${browserApp}</b> → <b>Permissions</b> → <b>Location</b> → <b>Allow only while using the app</b>, and turn on <b>Use precise location</b>.</li>
       ${tryAgainStep}</ol>`;
   }
@@ -408,8 +413,10 @@
       S.token = r.token; store.set('token', r.token);
       let perm = null;
       try { perm = (await navigator.permissions.query({ name: 'geolocation' })).state; } catch { /* not supported */ }
-      // Inside another app we still ask: some (the Google app, many QR scanners) can share location.
-      if (perm === 'denied' || !navigator.geolocation) showLocBlocked();
+      // Always really ask (from a tap) unless the browser says it's already allowed. "Denied" from the
+      // browser isn't trusted: Edge and DuckDuckGo can say that and still show the "Allow?" box when asked.
+      // Inside another app we still ask too: some (the Google app, many QR scanners) can share location.
+      if (!navigator.geolocation) showLocBlocked();
       else if (perm === 'granted') startGame();
       else showLocationAsk();
     } catch (e) {
