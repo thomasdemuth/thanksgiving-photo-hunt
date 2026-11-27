@@ -627,11 +627,11 @@
           </div>`;
         }).join('');
       html = `<div class="lob">
-        <div class="lob-top">🦃 ${esc(g.name)}</div>
+        <div class="lob-top"><span class="lob-gn">🦃 ${esc(g.name)}</span>${ls === 'ok' ? '<span class="lob-ok" title="Location is on" aria-label="Location is on">✓</span>' : ''}</div>
         <div class="lob-hero">
           <h1>${waitTeams ? 'Waiting for the teams' : 'Waiting for everyone to join'}<span class="lob-dots"><i></i><i></i><i></i></span></h1>
-          <p class="lob-you">${waitTeams ? `You're <b>${esc(me.name)}</b>. The host is picking the teams.` : `You're <b>${esc(me.name)}</b> on the <b>${esc(team?.name || '')}</b> team`}</p>
-          ${ls === 'ok' ? '<p class="lob-loc">📍 Location is on</p>'
+          ${waitTeams ? '<p class="lob-you">The host is picking the teams.</p>' : ''}
+          ${ls === 'ok' ? ''
             : ls === 'off' ? '<div class="lob-loc off"><span>📍 Location is off</span><button class="btn-small" data-lochelp>Fix it</button></div>'
             : '<div class="lob-loc"><span>📡 Finding your location…</span><button class="btn-small" data-lochelp>Help</button></div>'}
         </div>
