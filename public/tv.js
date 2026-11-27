@@ -761,6 +761,9 @@
     d.finds.forEach((f) => { if (f.proof_key) preload(`/img/${f.proof_key}`); });
     d.photos.forEach((p) => { if (teams.some((t) => answer(t, p))) preload(p.image); });
 
+    // During the photo rounds the scoreboard is compact (room for 5+ teams); full size again for the finish.
+    o.classList.toggle('many', teams.length >= 5);
+    o.classList.add('rounds');
     title('The results are in!', 'Let\'s go through every photo…');
     Sound.swell(3.4);
     await pause(3600);
@@ -780,7 +783,7 @@
         $('#rvTitle').textContent = `${DIFF[level]} photos`;
         $('#rvSub').textContent = `Photo ${i + 1} of ${photos.length}`;
         $('#rvRound').innerHTML = `<div class="rnd">
-          <figure class="rnd-target" id="rndTarget"><div class="rnd-frame"><img src="${esc(p.image)}" alt=""><div class="rnd-map" id="rndMap"></div></div><figcaption><b>#${numOf(p.id)}</b>${p.title ? ' · ' + esc(p.title) : ''} · ${p.points} pt${p.points === 1 ? '' : 's'}</figcaption></figure>
+          <figure class="rnd-target" id="rndTarget"><div class="rnd-frame"><img class="rnd-photo" src="${esc(p.image)}" alt=""><div class="rnd-map" id="rndMap"></div></div><figcaption><b>#${numOf(p.id)}</b>${p.title ? ' · ' + esc(p.title) : ''} · ${p.points} pt${p.points === 1 ? '' : 's'}</figcaption></figure>
           <div class="rnd-answers" style="--n:${teams.length}">${teams.map((t, k) => {
             const f = answer(t, p), pl = f && playerOf(f.player_id);
             const img = f && (f.proof_key ? `/img/${f.proof_key}` : null);
@@ -792,8 +795,6 @@
             </div>`;
           }).join('')}</div></div>`;
         // Build the map now (hidden) so its tiles load while the answers are stamped.
-        // Never let a map problem stop the show: without it, the photo just stays up.
-        let where = null; try { where = spotMap(p, teams, answer); } catch { $('#rndMap')?.remove(); }
         Sound.chime();
         await pause(3000);
         // 2. Stamp each answer: green check or red X, then add the points.
@@ -809,13 +810,27 @@
         }
         await pause(1200);
         // 3. Where it really was: the map fades in over the photo, then each team's spot drops in.
-        if (where && live() && !run.fast) {
+        let where = null;
+        if (p.lat != null && p.lng != null && live() && !run.fast) {
           $('#rvSub').textContent = 'Here\'s where it was';
-          $('#rndTarget').classList.add('map');
-          where.map.invalidateSize(); where.fit();
+          // The answers make way (their points are on the scoreboard) and the photo grows to fill the stage...
+          const rnd = o.querySelector('.rnd'), pic = o.querySelector('.rnd-photo');
+          rnd.classList.add('fade');
+          await pause(400);
+          glide(pic, () => rnd.classList.add('wide'), 900 / run.speed);
+          // Build the map now, at its full size, hidden under the big photo so its tiles load meanwhile.
+          // Never let a map problem stop the show: without it, the photo just stays up big.
+          try { where = spotMap(p, teams, answer); } catch { $('#rndMap')?.remove(); }
           Sound.whoosh();
-          await pause(1600);
-          for (const drop of where.drops) {
+          await pause(2200);
+          if (!live()) return;
+          // ...then shrinks into the corner, showing the map close in on the real spot underneath...
+          if (where) glide(pic, () => $('#rndTarget').classList.add('map'), 1300 / run.speed);
+          await pause(1500);
+          // ...then the map zooms out until every team's spot fits.
+          if (where && live() && !run.fast) where.zoomOut(1.8 / run.speed);
+          if (where) await pause(2100);
+          for (const drop of where ? where.drops : []) {
             if (!live() || run.fast) break;
             drop(); Sound.tap();
             await pause(900);
@@ -829,6 +844,7 @@
     // Make sure the bars end on the official scores (also after "Skip").
     teams.forEach((t) => setScore(t.id, t.score));
     $('#rvRound').innerHTML = '';
+    o.classList.remove('rounds');
     o.querySelector('.rv-speed')?.remove();
     title('Final scores');
     // Slide the lanes into finishing order.
@@ -856,6 +872,15 @@
     Sound.crash(); Sound.fanfare();
     confetti();
   }
+  // Move an element smoothly to wherever a class change puts it (measure, change, animate back from the old spot).
+  function glide(el, change, ms) {
+    const a = el.getBoundingClientRect();
+    change();
+    const b = el.getBoundingClientRect();
+    if (!b.width) return;
+    el.animate([{ transformOrigin: 'top left', transform: `translate(${a.left - b.left}px, ${a.top - b.top}px) scale(${a.width / b.width})` },
+      { transformOrigin: 'top left', transform: 'none' }], { duration: ms, easing: 'cubic-bezier(.4, 0, .2, 1)' });
+  }
   // The "here's where it was" map for one photo in the results show: the real spot with its circle,
   // and a dot for each team where they took their picture (added one at a time with drops()).
   // Built hidden, so the tiles load while the answers are stamped. Null if the photo has no location.
@@ -869,20 +894,60 @@
     L.marker(spot, { icon: L.divIcon({ className: 'rv-pin', html: '<span>📍</span>', iconSize: [40, 40], iconAnchor: [20, 38] }), zIndexOffset: 1000 }).addTo(map);
     const pts = [spot];
     const drops = [];
+    const SIDES = ['top', 'right', 'bottom', 'left'], OFF = { top: [0, -14], bottom: [0, 14], left: [-14, 0], right: [14, 0] };
+    let near = 0;
+    // Try the preferred side first, then the others; keep the one that bumps into the least
+    // (other labels, the pin, the photo in the corner, or the map's edge).
+    const placed = [];
+    const area = (a, b) => Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left)) * Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
+    // Where a label can go: each side right next to the dot, then nudged further along that side.
+    const SPOTS = (pref) => [pref, ...SIDES.filter((x) => x !== pref)].flatMap((sd) => sd === 'top' || sd === 'bottom'
+      ? [[sd, OFF[sd]], [sd, [0, OFF[sd][1] * 3.4]], [sd, [-90, OFF[sd][1]]], [sd, [90, OFF[sd][1]]]]
+      : [[sd, OFF[sd]], [sd, [OFF[sd][0], -36]], [sd, [OFF[sd][0], 36]]]);
+    function placeLabel(dot, text, pref) {
+      const box = el.getBoundingClientRect(), pin = el.querySelector('.rv-pin')?.getBoundingClientRect(), photo = el.parentElement.querySelector('.rnd-photo')?.getBoundingClientRect();
+      const avoid = [...placed, ...(pin ? [pin] : []), ...(photo ? [photo] : [])];
+      const put = ([sd, off]) => {
+        dot.unbindTooltip();
+        dot.bindTooltip(text, { permanent: true, direction: sd, offset: off, className: 'rv-tip' }).openTooltip();
+        return dot.getTooltip().getElement().getBoundingClientRect();
+      };
+      let best = null;
+      for (const [i, c] of SPOTS(pref).entries()) {
+        const r = put(c);
+        const outside = r.width * r.height - area(r, box);
+        const cost = outside * 3 + avoid.reduce((sum, q) => sum + area(r, q), 0) + i; // + i: prefer earlier spots on a tie
+        if (!best || cost < best.cost) best = { c, cost, r };
+        if (cost - i === 0) break;
+      }
+      best.r = put(best.c);
+      placed.push(best.r);
+    }
     teams.forEach((t) => {
       const f = answer(t, p);
       if (!f || f.lat == null || f.lng == null) return;
       const at = [f.lat, f.lng];
       pts.push(at);
+      // Put the label on the side of the dot away from the spot, so labels near the pin don't pile up.
+      // Dots right on the spot take turns going up, right, down, left.
+      const dy = f.lat - p.lat, dx = (f.lng - p.lng) * Math.cos(p.lat * Math.PI / 180);
+      const side = Math.hypot(dx, dy) < 0.00008 ? SIDES[near++ % 4] : Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'top' : 'bottom');
       drops.push(() => {
         L.polyline([at, spot], { color: t.color, weight: 4, dashArray: '2 9', opacity: 0.95 }).addTo(map);
-        L.circleMarker(at, { radius: 12, color: '#fff', weight: 3, fillColor: t.color, fillOpacity: 1, className: 'rv-dot' }).addTo(map)
-          .bindTooltip(`${esc(t.name)} · ${f.distance_m != null ? feet(f.distance_m) : ''}`, { permanent: true, direction: 'top', offset: [0, -12], className: 'rv-tip' });
+        const dot = L.circleMarker(at, { radius: 12, color: '#fff', weight: 3, fillColor: t.color, fillOpacity: 1, className: 'rv-dot' }).addTo(map);
+        placeLabel(dot, `${esc(t.name)} · ${f.distance_m != null ? feet(f.distance_m) : ''}`, side);
       });
     });
-    const fit = () => pts.length > 1 ? map.fitBounds(pts, { padding: [50, 50], maxZoom: 18 }) : map.setView(spot, 18);
-    fit();
-    return { map, fit, drops };
+    // Start close in on the spot (what the photo shows), then zoom out to fit everyone.
+    const close = () => map.setView(spot, 19, { animate: false });
+    const zoomOut = (secs) => {
+      if (pts.length < 2) return map.flyTo(spot, 18, { duration: secs });
+      // Room for labels on every side, and keep dots out from under the photo in the bottom-right corner.
+      const sz = map.getSize();
+      map.flyToBounds(pts, { paddingTopLeft: [300, 80], paddingBottomRight: [Math.max(300, sz.x * 0.25), Math.max(80, sz.y * 0.32)], maxZoom: 18, duration: secs });
+    };
+    close();
+    return { map, close, zoomOut, drops };
   }
   function confetti() {
     const c = document.createElement('canvas');

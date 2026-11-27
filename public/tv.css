@@ -122,27 +122,36 @@ body.tv-page.idle, body.tv-page.idle * { cursor: none !important; }
 .rv-title { font-size: 2.8em; }
 .rv-sub { font-size: 1.3em; margin-top: .15em; }
 .rv-round { flex: 1; width: 100%; min-height: 0; display: flex; align-items: center; justify-content: center; margin-top: 1.5vh; }
-.rnd { display: grid; grid-template-columns: minmax(0, 36%) minmax(0, 1fr); gap: 2.5vw; width: min(100%, 110em); align-items: center; }
-.rnd-target { margin: 0; animation: flip .5s ease-out; }
+/* Everything in a round sizes itself to the space above the scoreboard (container units), so nothing spills into it. */
+.rnd { display: grid; grid-template-columns: minmax(0, 36%) minmax(0, 1fr); gap: 2.5vw; width: min(100%, 110em); height: 100%; align-items: center; }
+.rnd-target { margin: 0; animation: flip .5s ease-out; height: 100%; container-type: size; display: flex; flex-direction: column; align-items: center; justify-content: center; }
 /* The photo sits in a frame; for "here's where it was" a map fades in and the photo shrinks into the corner. */
-.rnd-frame { position: relative; width: 100%; aspect-ratio: 4/3; }
-.rnd-target img { position: absolute; right: 0; bottom: 0; width: 100%; aspect-ratio: 4/3; object-fit: cover; border-radius: 8px; border: .3em solid #fff; display: block; z-index: 1000; box-sizing: border-box;
-  transition: width .9s cubic-bezier(.4, 0, .2, 1), right .9s, bottom .9s, box-shadow .9s; }
-.rnd-map { position: absolute; inset: 0; border-radius: 8px; border: .3em solid #fff; opacity: 0; transition: opacity .9s; background: #ddd; box-sizing: border-box; }
+.rnd-frame { position: relative; width: min(100cqw, (100cqh - 2.6em) * 4 / 3); aspect-ratio: 4/3; flex: none; }
+/* "Here's where it was": the answers fade out and the photo (then the map) gets the whole stage. */
+.rnd.fade .rnd-answers { opacity: 0; transition: opacity .35s; }
+.rnd.wide { grid-template-columns: minmax(0, 1fr) 0; gap: 0; }
+.rnd.wide .rnd-answers { display: none; }
+.rnd.wide .rnd-target { animation: none; }
+/* Wide: the frame (and the map) use the whole stage; the photo starts big in the middle, then glides into the corner. */
+.rnd.wide .rnd-frame { width: 100cqw; height: calc(100cqh - 2.6em); aspect-ratio: auto; }
+.rnd.wide .rnd-target .rnd-photo { inset: 0 auto auto 50%; translate: -50% 0; width: auto; height: 100%; aspect-ratio: 4/3; }
+.rnd.wide .rnd-target.map .rnd-photo { inset: auto .7em .7em auto; translate: none; width: 22%; height: auto; }
+.rnd-target .rnd-photo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border-radius: 8px; border: .3em solid #fff; display: block; z-index: 1000; box-sizing: border-box; transition: box-shadow 1.3s; }
+.rnd-map { position: absolute; inset: 0; border-radius: 8px; border: .3em solid #fff; opacity: 0; transition: opacity .4s; background: #ddd; box-sizing: border-box; }
 .rnd-target.map .rnd-map { opacity: 1; }
-.rnd-target.map img { width: 30%; right: .7em; bottom: .7em; box-shadow: 0 .2em 1em rgba(0,0,0,.6); }
+.rnd-target.map .rnd-photo { inset: auto .7em .7em auto; width: 30%; height: auto; aspect-ratio: 4/3; box-shadow: 0 .2em 1em rgba(0,0,0,.6); }
 .rv-pin span { display: block; font-size: 40px; line-height: 40px; text-align: center; filter: drop-shadow(0 2px 3px rgba(0,0,0,.5)); animation: stampin .5s cubic-bezier(.2, 1.7, .4, 1); }
 .rv-dot { animation: stampin .45s cubic-bezier(.2, 1.7, .4, 1); transform-box: fill-box; transform-origin: center; }
 .leaflet-tooltip.rv-tip { background: #111; color: #fff; border: 0; font-size: 22px; font-weight: 700; padding: .2em .6em; box-shadow: 0 .1em .4em rgba(0,0,0,.5); }
 .rnd-map .leaflet-control-attribution { font-size: 9px; opacity: .7; }
 .leaflet-tooltip.rv-tip::before { border-top-color: #111; }
 .rnd-target figcaption { margin-top: .4em; font-size: 1.3em; text-align: center; color: #ddd; }
-.rnd-answers { display: grid; grid-template-columns: repeat(var(--n), minmax(0, 1fr)); gap: 1.2vw; }
+.rnd-answers { display: grid; grid-template-columns: repeat(var(--n), minmax(0, 1fr)); gap: 1.2vw; height: 100%; align-content: center; container-type: size; }
 .ans { background: #1b1b1b; border-radius: 8px; overflow: hidden; border: .25em solid var(--c); opacity: 0; animation: ansin .5s ease-out forwards; transition: transform .3s, box-shadow .3s; }
 .ans.none { opacity: .45 !important; animation: none; }
 .ans-h { background: var(--c); color: #fff; font-weight: 700; font-size: 1.3em; padding: .3em .6em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ans-pic { position: relative; }
-.ans-pic img, .ans-nopic { width: 100%; aspect-ratio: 3/4; object-fit: cover; display: flex; align-items: center; justify-content: center; background: #2a2a2a; color: #888; font-size: 1.1em; }
+.ans-pic img, .ans-nopic { width: 100%; height: min((100cqw - (var(--n) - 1) * 1.2vw) / var(--n) * 4 / 3, 100cqh - 4.6em); object-fit: cover; display: flex; align-items: center; justify-content: center; background: #2a2a2a; color: #888; font-size: 1.1em; }
 .ans-by { padding: .3em .6em; color: #ccc; font-size: 1em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ans-stamp { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; }
 .ans-stamp span { width: 2.2em; height: 2.2em; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 3.4em; font-weight: 700; color: #fff; animation: stampin .45s cubic-bezier(.2, 1.7, .4, 1); box-shadow: 0 .1em .4em rgba(0,0,0,.4); }
@@ -154,6 +163,13 @@ body.tv-page.idle, body.tv-page.idle * { cursor: none !important; }
 .reveal { grid-template-rows: 1fr auto; }
 .rv-lanes .lane { padding: .4em 1em; }
 .rv-lanes .ln-score { font-size: 2.2em; }
+/* Compact scoreboard while the photos go by; full size again for the final scores and the winner. */
+.reveal.rounds .rv-lanes { gap: .35em; }
+.reveal.rounds .rv-lanes .lane { padding: .2em 1em; grid-template-columns: 13em 1fr 3.5em; }
+.reveal.rounds .ln-name { font-size: 1.25em; }
+.reveal.rounds .ln-track { height: 1.1em; }
+.reveal.rounds .rv-lanes .ln-score { font-size: 1.6em; }
+.reveal.rounds.many .ln-name small { display: none; }
 @keyframes ansin { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: none; } }
 @keyframes stampin { from { transform: scale(2.4) rotate(-15deg); opacity: 0; } to { transform: none; opacity: 1; } }
 
