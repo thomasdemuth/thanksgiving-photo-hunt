@@ -914,6 +914,8 @@
     el.querySelectorAll('[data-photo]').forEach((b) => b.onclick = () => openDetail(b.dataset.photo));
   }
 
+  // Tapping the little picture in a map pin's bubble opens that photo big.
+  document.addEventListener('click', (e) => { const im = e.target.closest('img[data-open]'); if (im && im.dataset.open) { go('photos'); openDetail(im.dataset.open); } });
   function openDetail(pid) {
     S.detail = pid;
     history.pushState({ detail: pid }, '');
@@ -1184,7 +1186,7 @@
       const p = S.data.photos.find((x) => x.id === f.photo_id);
       const mark = revealed() ? (f.counted ? '✓' : '✕') : '✓';
       L.marker([f.lat, f.lng], { icon: icon(mark, revealed() && !f.counted ? 'miss' : '') })
-        .bindPopup(`<img src="${esc(p?.thumb)}" style="width:150px;border-radius:6px;margin-bottom:4px"><b>#${numOf(f.photo_id)}</b> · ${esc(f.player_name || '')} · ${timeText(f.created_at)}`).addTo(pins);
+        .bindPopup(`<img src="${esc(p?.thumb)}" data-open="${esc(p?.id)}" style="width:150px;border-radius:6px;margin-bottom:4px;cursor:zoom-in"><b>#${numOf(f.photo_id)}</b> · ${esc(f.player_name || '')} · ${timeText(f.created_at)}`).addTo(pins);
     });
     drawTrail(); updateMates(); updateMe();
   }

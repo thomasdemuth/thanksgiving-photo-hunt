@@ -235,56 +235,72 @@
     render();
   }
 
-  // Tap a picture in the judge queue or the photo list to see it big, next to the photo it should match,
-  // with the Yes / No buttons right there.
-  document.addEventListener('click', (e) => {
-    const a = e.target.closest('.judge-item a[href^="/img/"], .feed-item a[href^="/img/"]');
-    if (!a) return;
-    e.preventDefault();
-    const item = a.closest('.judge-item, .feed-item');
-    const pics = [...item.querySelectorAll('a[href^="/img/"]')];
-    const btns = [...item.querySelectorAll('[data-judge], [data-flip]')].filter((b) => !b.disabled);
-    const info = item.querySelector('p.small, .grow')?.innerText.replace(/\s+/g, ' ').trim() || '';
+  // The big viewer. A photo on its own just shows large. A team's answer shows the photo next to their
+  // picture, and (when the phone sent its location) a Map view of the spot and where they took it.
+  // The judge can flip between Photos and Map as often as they like, then say yes or no from either.
+  const whereBtn = (f) => f.lat != null ? `<button class="btn-small" data-where="${f.id}">📍 View locations</button>` : '';
+  const ftOf = (m) => Math.round(m * 3.28).toLocaleString();
+  function closeViewer() {
+    if (A.viewMap) { A.viewMap.remove(); A.viewMap = null; }
+    document.querySelectorAll('.lightbox').forEach((x) => x.remove());
+  }
+  function openPhoto(src, cap) {
+    closeViewer();
     const o = document.createElement('div');
     o.className = 'lightbox';
-    o.innerHTML = `<div class="lb-pics">${pics.map((p, i) => `<figure><img src="${esc(p.getAttribute('href'))}" alt=""><figcaption>${pics.length > 1 ? (i === 0 ? 'The photo' : 'Their picture') : ''}</figcaption></figure>`).join('')}</div>
-      <div class="lb-info">${esc(info)}</div>
-      <div class="lb-btns">${btns.map((b, i) => `<button class="${b.dataset.s === 'approved' ? 'btn-ok' : b.dataset.s === 'rejected' ? 'btn-bad' : ''}" data-lb="${i}">${esc(b.textContent.trim())}</button>`).join('')}${item.querySelector('[data-where]') ? '<button data-lbwhere>📍 Locations</button>' : ''}<button data-lbclose>Close</button></div>`;
-    o.onclick = (ev) => {
-      if (ev.target.closest('[data-lbwhere]')) { o.remove(); item.querySelector('[data-where]').click(); return; }
-      const k = ev.target.closest('[data-lb]');
-      if (k) { btns[Number(k.dataset.lb)].click(); o.remove(); return; }
-      if (ev.target.closest('[data-lbclose]') || ev.target.tagName === 'IMG' || ev.target === o) o.remove();
-    };
+    o.innerHTML = `<div class="lb-pics"><figure><img src="${esc(src)}" alt=""><figcaption>${esc(cap || '')}</figcaption></figure></div>
+      <div class="lb-btns"><button data-lbclose>Close</button></div>`;
+    o.onclick = (ev) => { if (ev.target.closest('[data-lbclose]') || ev.target.tagName === 'IMG' || ev.target === o) closeViewer(); };
     document.body.appendChild(o);
-  });
-
-  // "View locations": a map with the photo's spot (and its check-in circle) and where the picture was taken.
-  const whereBtn = (f) => f.lat != null ? `<button class="btn-small" data-where="${f.id}">📍 View locations</button>` : '';
-  document.addEventListener('click', (e) => {
-    const b = e.target.closest('[data-where]');
-    if (!b) return;
-    e.preventDefault();
-    const f = A.d.finds.find((x) => x.id === b.dataset.where);
+  }
+  function openFind(fid, mode) {
+    const f = A.d.finds.find((x) => x.id === fid);
     if (!f) return;
+    closeViewer();
     const p = A.d.photos.find((x) => x.id === f.photo_id), t = A.d.teams.find((x) => x.id === f.team_id), pl = A.d.players.find((x) => x.id === f.player_id);
-    const item = b.closest('.judge-item, .feed-item');
-    const btns = item ? [...item.querySelectorAll('[data-judge], [data-flip]')].filter((x) => !x.disabled) : [];
-    const ftOf = (m) => Math.round(m * 3.28).toLocaleString();
-    const dist = f.distance_m != null ? `${ftOf(f.distance_m)} ft (${Math.round(f.distance_m)} m) from the spot` : '';
+    const hasMap = f.lat != null;
+    const yes = f.status === 'auto' || f.status === 'approved', no = f.status === 'far' || f.status === 'rejected';
+    const state = { auto: 'Counts (right spot)', approved: 'Counts (judge)', pending: 'Waiting for the judge', far: "Doesn't count (too far)", rejected: "Doesn't count (judge)" }[f.status] || '';
     const o = document.createElement('div');
-    o.className = 'lightbox locbox';
-    o.innerHTML = `<div class="lb-info"><b>${esc(pl?.name || '?')}</b> (${esc(t?.name || '')}) · #${A.d.photos.indexOf(p) + 1}<br><span class="small">${dist}${f.accuracy_m ? ` · phone GPS ±${ftOf(f.accuracy_m)} ft` : ''}</span></div>
-      <div class="loc-map"></div>
-      <div class="loc-key small"><span><i class="k-spot"></i>The spot (check-in circle)</span><span><i class="k-them" style="background:${esc(t?.color || '#333')}"></i>Where they took it</span></div>
-      <div class="lb-btns">${btns.map((x, i) => `<button class="${x.dataset.s === 'approved' ? 'btn-ok' : x.dataset.s === 'rejected' ? 'btn-bad' : ''}" data-lb="${i}">${esc(x.textContent.trim())}</button>`).join('')}<button data-lbclose>Close</button></div>`;
-    document.querySelectorAll('.locbox').forEach((x) => x.remove());
+    o.className = 'lightbox viewer';
+    o.innerHTML = `<div class="lb-info"><b>${esc(pl?.name || 'Judge')}</b> (${esc(t?.name || '')}) · #${A.d.photos.indexOf(p) + 1} · ${state}<br>
+        <span class="small">${f.distance_m != null ? `${ftOf(f.distance_m)} ft from the spot` : 'Added by the judge'}${f.accuracy_m ? ` · phone GPS ±${ftOf(f.accuracy_m)} ft` : ''}</span></div>
+      ${hasMap ? '<div class="seg lb-seg"><button data-mode="photos">Photos</button><button data-mode="map">Map</button></div>' : ''}
+      <div class="lb-pics"><figure><img src="/img/${esc(p?.image_key)}" alt=""><figcaption>The photo</figcaption></figure>
+        <figure>${f.proof_key ? `<img src="/img/${esc(f.proof_key)}" alt="">` : '<div class="nopic">No picture</div>'}<figcaption>Their picture</figcaption></figure></div>
+      ${hasMap ? `<div class="lb-mapwrap"><div class="loc-map"></div>
+        <div class="loc-key small"><span><i class="k-spot"></i>The spot (check-in circle)</span><span><i class="k-them" style="background:${esc(t?.color || '#333')}"></i>Where they took it</span></div></div>` : ''}
+      <div class="lb-btns">
+        <button class="btn-ok" data-v="approved" ${yes ? 'disabled' : ''}>✓ ${yes ? 'Counts' : f.status === 'far' ? 'Approve anyway' : 'Approve'}</button>
+        <button class="btn-bad" data-v="rejected" ${no ? 'disabled' : ''}>✕ ${no ? "Doesn't count" : 'Reject'}</button>
+        <button data-lbclose>Close</button></div>`;
     document.body.appendChild(o);
-    const m = L.map(o.querySelector('.loc-map'), { zoomControl: true });
+    const setMode = (m) => {
+      A.viewMode = m;
+      o.dataset.show = m;
+      o.querySelectorAll('[data-mode]').forEach((b) => b.classList.toggle('on', b.dataset.mode === m));
+      if (m === 'map') drawViewMap(o, f, p, t); // drawn the first time it's shown, so it gets the right size
+    };
+    setMode(hasMap && mode === 'map' ? 'map' : 'photos');
+    o.onclick = async (ev) => {
+      const mb = ev.target.closest('[data-mode]');
+      if (mb) { setMode(mb.dataset.mode); return; }
+      const v = ev.target.closest('[data-v]');
+      if (v) {
+        o.querySelectorAll('button').forEach((x) => { x.disabled = true; });
+        try { await api('/finds/' + f.id, 'PATCH', { status: v.dataset.v }); } finally { closeViewer(); await refresh(); render(); }
+        return;
+      }
+      if (ev.target.closest('[data-lbclose]')) closeViewer();
+    };
+  }
+  function drawViewMap(o, f, p, t) {
+    if (A.viewMap) { A.viewMap.invalidateSize(); return; }
+    const m = A.viewMap = L.map(o.querySelector('.loc-map'), { zoomControl: true });
     addBaseMap(m);
-    const them = [f.lat, f.lng], pts = [them];
-    if (f.accuracy_m) L.circle(them, { radius: f.accuracy_m, color: t?.color || '#333', weight: 1, dashArray: '4 4', fillOpacity: 0.08 }).addTo(m);
-    L.circleMarker(them, { radius: 9, color: '#fff', weight: 3, fillColor: t?.color || '#333', fillOpacity: 1 }).addTo(m).bindTooltip('Where they took it', { permanent: true, direction: 'top', offset: [0, -8] });
+    const them = [f.lat, f.lng], pts = [them], color = t?.color || '#333';
+    if (f.accuracy_m) L.circle(them, { radius: f.accuracy_m, color, weight: 1, dashArray: '4 4', fillOpacity: 0.08 }).addTo(m);
+    L.circleMarker(them, { radius: 9, color: '#fff', weight: 3, fillColor: color, fillOpacity: 1 }).addTo(m).bindTooltip('Where they took it', { permanent: true, direction: 'top', offset: [0, -8] });
     if (p?.lat != null) {
       const spot = [p.lat, p.lng]; pts.push(spot);
       L.circle(spot, { radius: p.radius_m || 40, color: '#1a73e8', weight: 2, fillOpacity: 0.12 }).addTo(m);
@@ -292,15 +308,24 @@
       L.polyline([spot, them], { color: '#333', weight: 2, dashArray: '6 6' }).addTo(m);
     }
     if (pts.length > 1) m.fitBounds(L.latLngBounds(pts), { padding: [60, 60], maxZoom: 19 }); else m.setView(them, 18);
-    const close = () => { m.remove(); o.remove(); };
-    o.onclick = (ev) => {
-      const k = ev.target.closest('[data-lb]');
-      if (k) { btns[Number(k.dataset.lb)].click(); close(); return; }
-      if (ev.target.closest('[data-lbclose]')) close();
-    };
-  });
+  }
+  // Any picture opens big: a team's answer opens the judge viewer, any other photo opens on its own.
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('.lightbox')) return;
+    const w = e.target.closest('[data-where]');
+    if (w) { e.preventDefault(); openFind(w.dataset.where, 'map'); return; }
+    const big = e.target.closest('img[data-big]');
+    if (big) { e.preventDefault(); e.stopPropagation(); openPhoto(big.dataset.big, big.dataset.cap); return; }
+    const a = e.target.closest('a[href^="/img/"]');
+    if (!a) return;
+    e.preventDefault();
+    const fid = a.closest('[data-fid]')?.dataset.fid;
+    if (fid) openFind(fid, A.viewMode); else openPhoto(a.getAttribute('href'));
+  }, true);
+  addEventListener('keydown', (e) => { if (e.key === 'Escape') closeViewer(); });
 
   function show(tab) {
+    closeViewer();
     A.tab = tab; A.placing = null; A.drawing = null;
     document.querySelectorAll('[data-tab]').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
     document.body.dataset.tab = tab;
@@ -494,7 +519,7 @@
   function photoRow(p, i) {
     return `<div class="prow" data-row="${p.id}">
       <span class="n">${i + 1}</span>
-      <img src="/img/${esc(p.thumb_key)}" alt="" loading="lazy">
+      <img src="/img/${esc(p.thumb_key)}" alt="" loading="lazy" data-big="/img/${esc(p.image_key)}" data-cap="#${i + 1} ${esc(p.title || '')}">
       <div class="pf">
         <input class="f-title" data-f="title" value="${esc(p.title)}" placeholder="Title (optional)">
         <span class="dseg f-diff">${[1, 2, 3].map((d) => `<button data-d="${d}" class="${p.difficulty === d ? 'on' : ''}">${DIFF[d]}</button>`).join('')}</span>
@@ -795,11 +820,11 @@
     document.querySelectorAll('[data-chip]').forEach((b) => b.onclick = () => { A.filter = b.dataset.chip; drawPins(); renderSide(); });
     $('#sideList').innerHTML = ps.map((p, i) => visible(p) ? `
       <div class="side-item ${A.sel === p.id ? 'sel' : ''}" data-item="${p.id}">
-        <img src="/img/${esc(p.thumb_key)}" loading="lazy" alt="">
+        <img src="/img/${esc(p.thumb_key)}" loading="lazy" alt="" data-big="/img/${esc(p.image_key)}" data-cap="#${i + 1} ${esc(p.title || '')}">
         <span class="t"><b>#${i + 1}</b> ${esc(p.title || '')}<br><span class="small">${diffTag(p.difficulty)} · ${p.points} pt</span></span>
         ${p.lat == null ? `<button class="btn-small btn-primary pin-btn" data-place2="${p.id}">Place</button>` : ''}
       </div>` : '').join('') || '<p class="muted pad">No photos here.</p>';
-    document.querySelectorAll('[data-item]').forEach((el) => el.onclick = (e) => { if (!e.target.closest('[data-place2]')) select(el.dataset.item, true); });
+    document.querySelectorAll('[data-item]').forEach((el) => el.onclick = (e) => { if (!e.target.closest('[data-place2], [data-big]')) select(el.dataset.item, true); });
     document.querySelectorAll('[data-place2]').forEach((b) => b.onclick = () => { select(b.dataset.place2); startPlacing(b.dataset.place2); });
   }
 
@@ -1053,7 +1078,7 @@
     const JMAX = 3, jShown = A.judgeAll ? pending : pending.slice(0, JMAX);
     if (changed('judge', pending.map((f) => f.id).join() + '|' + !!A.judgeAll)) $('#judge').innerHTML = pending.length ? jShown.map((f) => {
       const p = photoOf(f.photo_id), t = teamOf(f.team_id), pl = playerOf(f.player_id);
-      return `<div class="judge-item">
+      return `<div class="judge-item" data-fid="${f.id}">
         <div class="judge-pics"><figure><a href="/img/${esc(p?.image_key)}" target="_blank"><img src="/img/${esc(p?.thumb_key)}"></a><figcaption>#${numOf(f.photo_id)} · the photo</figcaption></figure>
           <figure>${f.proof_key ? `<a href="/img/${esc(f.proof_key)}" target="_blank"><img src="/img/${esc(f.proof_key)}"></a>` : '<div class="nopic">No picture</div>'}<figcaption>their picture</figcaption></figure></div>
         <p class="small" style="margin:.2em 0 .5em"><span class="swatch" style="background:${esc(t?.color)}"></span> <b>${esc(pl?.name || '?')}</b> (${esc(t?.name)}) · ${Math.round(f.distance_m)} m from the spot · GPS ±${Math.round(f.accuracy_m || 0)} m</p>
@@ -1066,7 +1091,7 @@
     const farOpen = !!$('#farList details')?.open; // keep it open when a new one arrives
     if (changed('far', far.map((f) => f.id).join())) $('#farList').innerHTML = far.length ? `<details class="mini" ${farOpen ? 'open' : ''}><summary><b>Marked no, too far away (${far.length})</b> <span class="small muted">check these if GPS was bad</span></summary>${far.map((f) => {
       const p = photoOf(f.photo_id), t = teamOf(f.team_id), pl = playerOf(f.player_id);
-      return `<div class="judge-item"><div class="judge-pics"><figure><a href="/img/${esc(p?.image_key)}" target="_blank"><img src="/img/${esc(p?.thumb_key)}" loading="lazy"></a><figcaption>#${numOf(f.photo_id)} · the photo</figcaption></figure>
+      return `<div class="judge-item" data-fid="${f.id}"><div class="judge-pics"><figure><a href="/img/${esc(p?.image_key)}" target="_blank"><img src="/img/${esc(p?.thumb_key)}" loading="lazy"></a><figcaption>#${numOf(f.photo_id)} · the photo</figcaption></figure>
         <figure>${f.proof_key ? `<a href="/img/${esc(f.proof_key)}" target="_blank"><img src="/img/${esc(f.proof_key)}" loading="lazy"></a>` : '<div class="nopic">No picture</div>'}<figcaption>their picture</figcaption></figure></div>
         <p class="small"><span class="swatch" style="background:${esc(t?.color)}"></span> <b>${esc(pl?.name || '?')}</b> (${esc(t?.name)}) · ${Math.round(f.distance_m)} m from the spot · GPS ±${Math.round(f.accuracy_m || 0)} m</p>
         <div class="row">${whereBtn(f)}<button class="btn-ok btn-small" data-judge="${f.id}" data-s="approved">✓ Approve anyway</button></div></div>`;
@@ -1186,7 +1211,7 @@
         const label = { auto: 'Yes · right spot', approved: 'Yes · judge', pending: 'Waiting for judge', far: 'No · too far', rejected: 'No · judge' }[f.status] || f.status;
         const yes = f.status === 'auto' || f.status === 'approved', no = f.status === 'far' || f.status === 'rejected';
         const canReset = f.distance_m != null && (f.status === 'approved' || f.status === 'rejected');
-        return `<div class="feed-item judge-row">
+        return `<div class="feed-item judge-row" data-fid="${f.id}">
           <a href="/img/${esc(p?.image_key)}" target="_blank" title="The photo"><img src="/img/${esc(p?.thumb_key)}" alt="" loading="lazy"></a>
           ${f.proof_key ? `<a href="/img/${esc(f.proof_key)}" target="_blank" title="Their picture"><img src="/img/${esc(f.proof_key)}" alt="" loading="lazy"></a>` : '<span class="nopic-sm">No pic</span>'}
           <div class="grow"><b>${esc(pl?.name || 'Judge')}</b> <span class="swatch" style="background:${esc(t?.color)}"></span> ${esc(t?.name)} · #${numOf(f.photo_id)} <span class="small muted">(${DIFF[p?.difficulty] || ''})</span><br>
@@ -1235,7 +1260,7 @@
       ${winner ? `<div class="winner" style="background:${esc(winner.color)}"><h1>${esc(winner.name)} ${g.revealed_at ? 'wins!' : 'is in the lead'}</h1><p>${winner.score} points · ${winner.found} photos found</p></div>` : ''}
       <div class="row"><button class="btn-small" id="winBtn">Show winner full screen</button><button class="btn-small" id="csvBtn">Download results (CSV)</button></div>
       ${scoreTiles()}
-      <section class="card sec"><h2>Proof photos <span class="count">${proofs.length}</span></h2><div class="gallery">${proofs.map((f) => { const t = teamOf(f.team_id); return `<figure><a href="/img/${esc(f.proof_key)}" target="_blank"><img src="/img/${esc(f.proof_key)}" loading="lazy"></a><figcaption><span class="swatch" style="background:${esc(t.color)}"></span> ${esc(playerOf(f.player_id)?.name || '')} · #${numOf(f.photo_id)}</figcaption></figure>`; }).join('') || '<p class="muted">None yet.</p>'}</div></section>
+      <section class="card sec"><h2>Proof photos <span class="count">${proofs.length}</span></h2><div class="gallery">${proofs.map((f) => { const t = teamOf(f.team_id); return `<figure data-fid="${f.id}"><a href="/img/${esc(f.proof_key)}" target="_blank"><img src="/img/${esc(f.proof_key)}" loading="lazy"></a><figcaption><span class="swatch" style="background:${esc(t.color)}"></span> ${esc(playerOf(f.player_id)?.name || '')} · #${numOf(f.photo_id)}</figcaption></figure>`; }).join('') || '<p class="muted">None yet.</p>'}</div></section>
       </div>`;
     $('#winBtn').onclick = () => {
       if (!winner) return;

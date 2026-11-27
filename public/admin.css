@@ -320,10 +320,17 @@ body.admin .tv h1 { font-size: 3em; }
 body.admin .tv h2 { display: block; }
 body.admin #upProg:empty { display: none; }
 
-/* View locations: map of the spot and where the picture was taken */
-body.admin .locbox { background: var(--bg, #fff); color: var(--ink, #111); }
-body.admin .locbox .lb-info { color: inherit; }
+/* Judge viewer: Photos / Map switch */
+body.admin .lb-seg { display: flex; gap: 0; align-self: flex-start; border: 2px solid #fff; border-radius: var(--r-sm); overflow: hidden; }
+body.admin .lb-seg button { min-height: 40px; padding: 0 var(--sp-5); border: 0; border-radius: 0; background: transparent; color: #fff; font-size: var(--fs-body); font-weight: var(--fw-button); }
+body.admin .lb-seg button.on { background: #fff; color: var(--ink); }
+body.admin .viewer[data-show="photos"] .lb-mapwrap { display: none; }
+body.admin .viewer[data-show="map"] .lb-pics { display: none; }
+body.admin .lb-mapwrap { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
 body.admin .loc-map { flex: 1; min-height: 240px; border-radius: var(--r-sm); }
-body.admin .loc-key { display: flex; gap: var(--sp-4); flex-wrap: wrap; }
-body.admin .loc-key i { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: var(--sp-1); vertical-align: -1px; border: 2px solid #fff; box-shadow: 0 0 0 1px #0003; }
+body.admin .loc-key { display: flex; gap: var(--sp-4); flex-wrap: wrap; color: #fff; }
+body.admin .loc-key i { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: var(--sp-1); vertical-align: -1px; border: 2px solid #fff; }
 body.admin .loc-key .k-spot { background: #1a73e8; }
+body.admin .lightbox .nopic { flex: 1; display: grid; place-items: center; color: #aaa; border: 1px dashed #555; border-radius: var(--r-sm); }
+body.admin .lb-btns button:disabled { opacity: .45; }
+body.admin img[data-big] { cursor: zoom-in; }
