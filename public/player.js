@@ -461,7 +461,7 @@
       flushQueue();
     } catch (e) {
       if (!e.handled) {
-        S.offline = true; renderTop();
+        S.offline = true; renderTop(); renderScreen();
         if (!S.data) $('#vPhotos').innerHTML = '<div class="empty">Can\'t reach the game right now. Check your signal. Trying again…</div>';
       }
     } finally {
@@ -610,7 +610,16 @@
     if (ph === 'lobby') {
       const ls = locStatus();
       const waitTeams = g.random_teams && !team; // teams are being picked at random
-      sig = JSON.stringify(['lobby', me, S.data.teams.map((x) => [x.id, x.name, x.color, x.members]), S.data.everyone, g.random_teams, g.teams_ready, S.switching, ls]);
+      sig = JSON.stringify(['lobby', me, S.data.teams.map((x) => [x.id, x.name, x.color, x.members]), S.data.everyone, g.random_teams, g.teams_ready, S.switching, ls, !!S.offline, !!S.statusOpen]);
+      // Status in the corner: a quiet dot when location and internet are fine (tap it to see so),
+      // a warning with what's wrong when they aren't.
+      const net = !S.offline;
+      const problem = !net ? 'No internet' : ls === 'off' ? 'Location is off' : ls === 'searching' ? 'Finding location…' : '';
+      const statusBtn = `<button class="lob-status ${problem ? (ls === 'searching' && net ? 'wait' : 'bad') : 'good'}" data-status aria-label="${problem || 'Status: all good'}">${problem ? `<span class="lob-si">${ls === 'searching' && net ? '…' : '!'}</span>${esc(problem)}` : '<span class="lob-dot"></span>'}</button>`;
+      const statusPop = S.statusOpen ? `<div class="lob-pop">
+          <div>${ls === 'ok' ? '📍 Location is on' : ls === 'off' ? '⚠️ Location is off. You can\'t send photos without it.' : '📡 Looking for your location…'}</div>
+          <div>${net ? '📶 Internet connection is good' : '⚠️ No internet. Check your signal or Wi-Fi.'}</div>
+          ${ls !== 'ok' ? '<button class="btn-small" data-lochelp>How to fix location</button>' : ''}</div>` : '';
       // Everything fits on one screen: names are one line per team (yours gets two), cut off with "+N more".
       const names = (list, mineName) => list.length
         ? list.map((n) => n === mineName ? `<b>${esc(n)} (you)</b>` : esc(n)).join(', ')
@@ -627,13 +636,10 @@
           </div>`;
         }).join('');
       html = `<div class="lob">
-        <div class="lob-top"><span class="lob-gn">🦃 ${esc(g.name)}</span>${ls === 'ok' ? '<span class="lob-ok" title="Location is on" aria-label="Location is on">✓</span>' : ''}</div>
+        <div class="lob-top"><span class="lob-gn">🦃 ${esc(g.name)}</span>${statusBtn}${statusPop}</div>
         <div class="lob-hero">
           <h1>${waitTeams ? 'Waiting for the teams' : 'Waiting for everyone to join'}<span class="lob-dots"><i></i><i></i><i></i></span></h1>
           ${waitTeams ? '<p class="lob-you">The host is picking the teams.</p>' : ''}
-          ${ls === 'ok' ? ''
-            : ls === 'off' ? '<div class="lob-loc off"><span>📍 Location is off</span><button class="btn-small" data-lochelp>Fix it</button></div>'
-            : '<div class="lob-loc"><span>📡 Finding your location…</span><button class="btn-small" data-lochelp>Help</button></div>'}
         </div>
         <div class="lob-teams">${teamsHtml}</div>
         <button class="btn-big lob-howbtn" data-howto>How to play</button>
@@ -659,7 +665,9 @@
     el.className = 'screen-full ' + ph;
     el.style.background = ph === 'over' ? '#111' : color;
     el.innerHTML = html;
-    el.querySelectorAll('[data-lochelp]').forEach((b) => b.onclick = showLocHelp);
+    el.querySelectorAll('[data-lochelp]').forEach((b) => b.onclick = (e) => { e.stopPropagation(); S.statusOpen = false; showLocHelp(); });
+    el.querySelectorAll('[data-status]').forEach((b) => b.onclick = (e) => { e.stopPropagation(); S.statusOpen = !S.statusOpen; renderScreen(); });
+    el.onclick = (e) => { if (S.statusOpen && !e.target.closest('.lob-pop')) { S.statusOpen = false; renderScreen(); } };
     el.querySelectorAll('[data-howto]').forEach((b) => b.onclick = () => showHowTo());
     el.querySelectorAll('[data-switch]').forEach((b) => b.onclick = async () => {
       S.switching = true; renderScreen();
