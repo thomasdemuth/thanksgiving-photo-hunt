@@ -1012,7 +1012,7 @@
         <p class="small muted">On the TV, open <b>${esc(location.host)}/tv</b> and click the screen once for sound and full screen.</p>
         <div class="toggles">${TV_OPTS.map(([k, label, help]) => `<label class="rt-toggle"><input type="checkbox" data-tv="${k}" ${tvs[k] ? 'checked' : ''}><span><b>${label}</b>${help ? `<br><span class="small muted">${help}</span>` : ''}</span></label>`).join('')}</div>
         <div class="field-row"><span>Results speed</span>${[1, 2, 4].map((x) => `<button class="btn-small ${(tvs.speed || 1) === x ? 'btn-primary' : ''}" data-tvspeed="${x}">${x}×</button>`).join('')}</div>
-        <div class="row">${game.revealed_at ? '<button class="btn-small" data-tvcmd="replay">Show the results again</button><button class="btn-small" data-tvcmd="skip">Skip to the winner</button>' : ''}<button class="btn-small" data-tvcmd="close">Back to the map</button></div>`;
+        <div class="row">${game.revealed_at ? '<button class="btn-small" data-tvcmd="replay">Show the results again</button><button class="btn-small" data-tvcmd="skip">Skip to the winner</button>' : ''}<button class="btn-small" data-tvcmd="miles">🥾 Show miles walked</button><button class="btn-small" data-tvcmd="close">Back to the map</button></div>`;
       const saveTv = async (patch) => { try { await api('/game', 'PATCH', { tv: patch }); } finally { await refresh(); A.sig.tv = null; render(); } };
       document.querySelectorAll('[data-tv]').forEach((c) => c.onchange = () => {
         c.blur();

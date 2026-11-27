@@ -425,3 +425,7 @@ body.tv-page.idle, body.tv-page.idle * { cursor: none !important; }
 /* Final countdown: places revealed from last to 2nd; the rest wait dimmed. */
 .reveal.countdown .lane:not(.placed) { opacity: .55; }
 .reveal.countdown .lane.placed { animation: plus .5s cubic-bezier(.2, 1.8, .4, 1); }
+
+/* "Show miles walked" on its own: no scoreboard underneath */
+.reveal.miles-only { grid-template-rows: 1fr; }
+.reveal.miles-only .rv-round { margin-top: 4vh; }

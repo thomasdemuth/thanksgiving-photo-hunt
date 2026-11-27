@@ -167,9 +167,10 @@
   }
 
   function runCmd(c) {
-    if (c === 'replay' && T.d.game.revealed) showReveal();
+    if (c === 'replay' && T.d.game.revealed) { $('#milesShow')?.remove(); showReveal(); }
     if (c === 'skip' && T.revealRun) T.revealRun.fast = true;
-    if (c === 'close') { T.revealRun = null; $('#reveal')?.remove(); $('#tvAnn')?.remove(); stopTutorial(); document.querySelectorAll('.pop-back').forEach((x) => x.remove()); }
+    if (c === 'miles') showMiles();
+    if (c === 'close') { T.revealRun = null; $('#reveal')?.remove(); $('#milesShow')?.remove(); $('#tvAnn')?.remove(); stopTutorial(); document.querySelectorAll('.pop-back').forEach((x) => x.remove()); }
   }
 
   function renderStatus() {
@@ -993,6 +994,40 @@
     $('#rvSkip')?.remove();
     Sound.crash(); Sound.fanfare();
     confetti();
+  }
+  // Just the miles walked, on its own (admin TV card → "Show miles walked"). Stays up until "Back to the map".
+  function showMiles() {
+    const d = T.d, walk = d.walk;
+    stopTutorial(true);
+    $('#milesShow')?.remove();
+    const o = document.createElement('div');
+    o.className = 'reveal miles-only'; o.id = 'milesShow';
+    const teams = [...d.teams].sort((a, b) => (walk?.teams?.[a.id]?.miles || 0) - (walk?.teams?.[b.id]?.miles || 0));
+    const most = Math.max(0.01, ...teams.map((t) => walk?.teams?.[t.id]?.miles || 0));
+    const has = walk && teams.some((t) => walk.teams?.[t.id]?.miles > 0);
+    o.innerHTML = `<div class="rv-stage"><div class="rv-title in">🥾 Miles walked</div><div class="rv-sub">${has ? 'How far did each team go?' : 'No walking trails recorded yet.'}</div>
+      <div class="rv-round">${has ? `<div class="walk">${teams.map((t) => `<div class="walk-row" data-t="${esc(t.id)}" style="--c:${esc(t.color)}"><div class="walk-name">${esc(t.name)}</div><div class="walk-track"><div class="walk-fill"></div></div><div class="walk-mi">–</div></div>`).join('')}
+      <div class="walk-foot" id="walkFoot"></div></div>` : ''}</div></div>`;
+    document.body.appendChild(o);
+    if (!has) return;
+    Sound.whoosh();
+    teams.forEach((t, i) => setTimeout(() => {
+      if (!o.isConnected) return;
+      const mi = walk.teams[t.id]?.miles || 0, row = o.querySelector(`.walk-row[data-t="${CSS.escape(t.id)}"]`);
+      row.classList.add('on');
+      row.querySelector('.walk-fill').style.width = (100 * mi) / most + '%';
+      const el = row.querySelector('.walk-mi'), t0 = performance.now();
+      (function step(now) { const k = Math.min(1, (now - t0) / 1400); el.textContent = `${(mi * (1 - Math.pow(1 - k, 3))).toFixed(2)} mi`; if (k < 1 && el.isConnected) requestAnimationFrame(step); })(t0);
+      Sound.tap();
+    }, 1200 + i * 1800));
+    setTimeout(() => {
+      if (!o.isConnected) return;
+      const foot = [];
+      if (walk.top) foot.push(`Farthest walker: <b>${esc(walk.top.name)}</b> (${esc(d.teams.find((t) => t.id === walk.top.team_id)?.name || '')}) · ${walk.top.miles.toFixed(2)} mi`);
+      if (walk.total_miles) foot.push(`All together: <b>${walk.total_miles.toFixed(1)} miles</b>`);
+      $('#walkFoot').innerHTML = foot.join('<br>');
+      Sound.ding(2);
+    }, 1200 + teams.length * 1800 + 600);
   }
   // Move an element smoothly to wherever a class change puts it (measure, change, animate back from the old spot).
   function glide(el, change, ms) {

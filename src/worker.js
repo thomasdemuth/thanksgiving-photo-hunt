@@ -39,7 +39,7 @@ const tag = (game) => `${game.id}:${game.version || 0}:${effectiveStatus(game)}`
 // TV settings. The TV page has no password and no buttons: the host changes these from the admin page.
 // By default the map shows no locations at all (no players, trails or photo spots) and no results.
 const TV_DEFAULTS = { noSpoilers: true, players: false, trails: false, names: true, spots: false, popups: true, joinCode: true, sound: true, speed: 1 };
-const TV_CMDS = ['replay', 'skip', 'close'];
+const TV_CMDS = ['replay', 'skip', 'close', 'miles'];
 function tvSettings(game) {
   let s = {};
   try { s = JSON.parse(game.tv_settings || '{}') || {}; } catch { /* use defaults */ }
@@ -358,7 +358,8 @@ function walkedMeters(pts) {
 }
 
 async function walkStats(env, game, teams) {
-  const key = game.id + ':' + game.revealed_at;
+  // Recomputed for each reveal, and each time the host presses "Show miles walked" before the reveal.
+  const key = game.id + ':' + (game.revealed_at || 'miles' + game.tv_cmd_at);
   if (walkCache.has(key)) return walkCache.get(key);
   let walk = null;
   try {
@@ -490,7 +491,7 @@ async function player(request, env, url) {
     const spots = tv.spots ? (await env.DB.prepare('SELECT id, lat, lng, radius_m FROM photos WHERE game_id = ? AND lat IS NOT NULL').bind(game.id).all()).results : [];
     const cmd = game.tv_cmd ? { cmd: game.tv_cmd, at: game.tv_cmd_at } : null;
     // How far everyone walked: only with the results.
-    const walk = shown ? await walkStats(env, game, s.teams) : null;
+    const walk = shown || game.tv_cmd === 'miles' ? await walkStats(env, game, s.teams) : null;
     return json({ game: { ...s.game, cmd }, tv, teams, photos, finds, players, spots, pings, walk, v, now: now() });
   }
 
