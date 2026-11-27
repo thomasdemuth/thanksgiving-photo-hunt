@@ -1,3 +1,4 @@
+import STATIC from './static-embed.js';
 // Thanksgiving Photo Hunt: one Worker serving the JSON API and photos.
 // Static files in /public are served by Cloudflare before this runs.
 
@@ -47,6 +48,20 @@ function tvSettings(game) {
   return out;
 }
 
+// The app's pages, scripts and styles, embedded at deploy time (scripts/embed-static.mjs).
+// "/" is index.html, "/tv" is tv.html, and so on. Vendor files come from static assets.
+const STATIC_TYPES = { html: 'text/html; charset=utf-8', js: 'text/javascript; charset=utf-8', css: 'text/css; charset=utf-8' };
+function serveStatic(request, url) {
+  let path = url.pathname === '/' ? '/index.html' : url.pathname.replace(/\/$/, '');
+  if (!STATIC[path] && STATIC[path + '.html']) path += '.html';
+  const body = STATIC[path];
+  if (body == null || (request.method !== 'GET' && request.method !== 'HEAD')) return new Response('Not found', { status: 404 });
+  const type = STATIC_TYPES[path.split('.').pop()] || 'text/plain; charset=utf-8';
+  // Pages are always fresh; scripts and styles are cache-busted with ?v= in the pages.
+  const cache = path.endsWith('.html') ? 'no-cache' : 'public, max-age=300';
+  return new Response(request.method === 'HEAD' ? null : body, { headers: { 'content-type': type, 'cache-control': cache } });
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -59,7 +74,7 @@ export default {
         return await admin(request, env, url, who);
       }
       if (url.pathname.startsWith('/api/')) return await player(request, env, url);
-      return new Response('Not found', { status: 404 });
+      return serveStatic(request, url);
     } catch (err) {
       console.error(err);
       return json({ error: 'Something went wrong on our end. Please try again.' }, 500);

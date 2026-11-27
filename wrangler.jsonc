@@ -3,7 +3,8 @@
   "name": "photo-hunt",
   "main": "src/worker.js",
   "compatibility_date": "2026-11-01",
-  "assets": { "directory": "./public", "run_worker_first": ["/api/*", "/img/*"] },
+  // Only the vendor files are static assets; the Worker serves the app's own pages (see scripts/embed-static.mjs).
+  "assets": { "directory": "./dist-assets", "run_worker_first": ["/api/*", "/img/*"] },
   "d1_databases": [
     { "binding": "DB", "database_name": "photo-hunt-db", "database_id": "7270517a-1ac9-40fa-b95a-fb5bffd39025" }
   ],
