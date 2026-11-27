@@ -391,3 +391,37 @@ body.tv-page.idle, body.tv-page.idle * { cursor: none !important; }
 @keyframes annIn { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: none; } }
 .tnames.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(11em, 1fr)); align-content: start; }
 .tcol.pre .thead .sub { font-size: 1.3em; opacity: .9; margin-top: .2em; }
+
+/* Results show, step 4 of each photo: "How close did everyone get?" (each team's picture, closest first) */
+.rnd.close .ans { position: relative; }
+.rnd.close .ans-pic img, .rnd.close .ans-nopic { height: min((100cqw - (var(--n) - 1) * 1.2vw) / var(--n) * 4 / 3, 100cqh - 5.4em); }
+.ans-badge { position: absolute; top: .35em; right: .35em; width: 1.6em; height: 1.6em; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 1.4em; color: #fff; background: var(--red); box-shadow: 0 .1em .3em rgba(0,0,0,.5); }
+.ans.yes .ans-badge { background: var(--green); }
+.rnd.close .ans.no .ans-pic img { filter: none; }
+.rnd.close .ans.yes { transform: none; box-shadow: none; }
+.ans-dist { text-align: center; font-weight: 700; font-size: 1.35em; padding: .25em .3em; color: #777; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ans.shown .ans-dist { color: #fff; animation: plus .45s cubic-bezier(.2, 1.8, .4, 1); }
+.ans.closest { box-shadow: 0 0 0 .25em #fccc0a, 0 0 2em rgba(252,204,10,.7) !important; transform: translateY(-.4em) !important; }
+.ans-tag { position: absolute; left: 50%; top: 2.4em; translate: -50% 0; white-space: nowrap; font-weight: 700; font-size: 1.25em; padding: .2em .7em; border-radius: 999px; box-shadow: 0 .15em .5em rgba(0,0,0,.5); animation: stampin .45s cubic-bezier(.2, 1.7, .4, 1); z-index: 2; }
+.ans-tag.so { background: #fff; color: #c0261c; }
+.ans-tag.best { background: #fccc0a; color: #111; }
+
+/* "By the numbers": miles walked per team, then one stat card at a time */
+.walk { width: min(100%, 70em); display: grid; gap: .8em; align-content: center; height: 100%; }
+.walk-row { display: grid; grid-template-columns: 12em 1fr 6.5em; gap: 1em; align-items: center; font-size: 1.5em; opacity: .25; transition: opacity .4s; }
+.walk-row.on { opacity: 1; }
+.walk-name { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-left: .3em solid var(--c); padding-left: .5em; text-align: left; }
+.walk-track { height: 1em; background: rgba(255,255,255,.1); border-radius: 1em; overflow: hidden; }
+.walk-fill { height: 100%; width: 0; background: var(--c); border-radius: 1em; transition: width 1.4s cubic-bezier(.2, .8, .3, 1); }
+.walk-mi { font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
+.walk-foot { margin-top: .6em; font-size: 1.4em; color: #ddd; line-height: 1.5; min-height: 3em; }
+.rv-stat { display: flex; align-items: center; justify-content: center; gap: 3vw; height: 100%; animation: flip .5s ease-out; text-align: center; }
+.rv-stat.has-img { text-align: left; }
+.rv-stat-img { height: min(100%, 26em); aspect-ratio: 3/4; object-fit: cover; border-radius: 10px; border: .35em solid #fff; box-shadow: 0 .3em 1.5em rgba(0,0,0,.6); }
+.rv-stat-icon { font-size: 3.5em; line-height: 1; }
+.rv-stat-big { font-size: 5.5em; font-weight: 700; line-height: 1.05; margin: .1em 0; }
+.rv-stat-cap { font-size: 1.7em; color: #ddd; max-width: 22em; }
+
+/* Final countdown: places revealed from last to 2nd; the rest wait dimmed. */
+.reveal.countdown .lane:not(.placed) { opacity: .55; }
+.reveal.countdown .lane.placed { animation: plus .5s cubic-bezier(.2, 1.8, .4, 1); }

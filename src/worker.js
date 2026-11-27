@@ -320,6 +320,67 @@ async function gameState(env, game) {
   return data;
 }
 
+// How far each player and team walked, from the location pings. Shown on the TV after the reveal.
+// Cached per reveal (game id + revealed_at), so it's worked out once even though the TV polls.
+const walkCache = new Map();
+const WALK_MIN_M = 10;   // smaller moves are GPS jitter
+const WALK_MAX_MPS = 4;  // faster than a brisk run: a GPS jump or a car ride, so it doesn't count
+const M_PER_MILE = 1609.34;
+const miles2 = (m) => Math.round((m / M_PER_MILE) * 100) / 100;
+
+function walkedMeters(pts) {
+  let total = 0, anchor = null;
+  for (const p of pts) {
+    if (!anchor) { anchor = p; continue; }
+    const d = haversine(anchor.lat, anchor.lng, p.lat, p.lng);
+    if (d < WALK_MIN_M) continue; // jitter: keep the anchor
+    const dt = (p.at - anchor.at) / 1000;
+    if (dt <= 0 || d / dt > WALK_MAX_MPS) { anchor = p; continue; } // jump: skip it, start again from here
+    total += d;
+    anchor = p;
+  }
+  return total;
+}
+
+async function walkStats(env, game, teams) {
+  const key = game.id + ':' + game.revealed_at;
+  if (walkCache.has(key)) return walkCache.get(key);
+  let walk = null;
+  try {
+    const from = game.started_at || 0, to = game.ends_at || now();
+    const [players, pings] = await env.DB.batch([
+      env.DB.prepare("SELECT id, team_id, name FROM players WHERE game_id = ? AND team_id IS NOT NULL AND team_id != '' ORDER BY created_at").bind(game.id),
+      env.DB.prepare('SELECT player_id, lat, lng, at FROM pings WHERE game_id = ? AND at BETWEEN ? AND ? ORDER BY player_id, at').bind(game.id, from, to),
+    ]);
+    const byPlayer = new Map();
+    for (const r of pings.results) {
+      let a = byPlayer.get(r.player_id);
+      if (!a) byPlayer.set(r.player_id, (a = []));
+      a.push(r);
+    }
+    const out = {};
+    for (const t of teams) out[t.id] = { miles: 0, people: [] };
+    let top = null;
+    for (const p of players.results) {
+      const team = out[p.team_id];
+      if (!team) continue;
+      const miles = miles2(walkedMeters(byPlayer.get(p.id) || []));
+      team.people.push({ name: p.name, miles });
+      if (miles > team.miles) team.miles = miles; // teams walk together: the longest trail, not the sum
+      if (miles > 0 && (!top || miles > top.miles)) top = { name: p.name, team_id: p.team_id, miles };
+    }
+    for (const t of Object.values(out)) t.people.sort((a, b) => b.miles - a.miles);
+    const total = Object.values(out).reduce((s, t) => s + t.miles, 0);
+    walk = { teams: out, top, total_miles: Math.round(total * 100) / 100 };
+  } catch (e) {
+    console.error('walk stats failed', e);
+    return null; // not cached, so the next poll tries again
+  }
+  if (walkCache.size > 20) walkCache.clear();
+  walkCache.set(key, walk);
+  return walk;
+}
+
 // What one player is allowed to see. Before the reveal: no scores, no right/wrong, and other
 // teams' finds only as anonymous "Team Red found something" events.
 function playerView(s, me, mates) {
@@ -413,7 +474,9 @@ async function player(request, env, url) {
     }
     const spots = tv.spots ? (await env.DB.prepare('SELECT id, lat, lng, radius_m FROM photos WHERE game_id = ? AND lat IS NOT NULL').bind(game.id).all()).results : [];
     const cmd = game.tv_cmd ? { cmd: game.tv_cmd, at: game.tv_cmd_at } : null;
-    return json({ game: { ...s.game, cmd }, tv, teams, photos, finds, players, spots, pings, v, now: now() });
+    // How far everyone walked: only with the results.
+    const walk = shown ? await walkStats(env, game, s.teams) : null;
+    return json({ game: { ...s.game, cmd }, tv, teams, photos, finds, players, spots, pings, walk, v, now: now() });
   }
 
   // Look for players with this name, for "Is this you, Mike on Blue team?"

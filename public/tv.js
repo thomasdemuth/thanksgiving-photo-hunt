@@ -761,6 +761,102 @@
     d.finds.forEach((f) => { if (f.proof_key) preload(`/img/${f.proof_key}`); });
     d.photos.forEach((p) => { if (teams.some((t) => answer(t, p))) preload(p.image); });
 
+    const teamOf = (id) => teams.find((t) => t.id === id);
+    const proof = (f) => f && f.proof_key ? `/img/${f.proof_key}` : null;
+    const dist = (m) => (m < 15 ? 'Right there!' : m < 1609 ? `${Math.round((m * 3.28) / 10) * 10} ft away` : `${(m / 1609).toFixed(1)} mi away`);
+    // "So close": a wrong answer within a few circles of the spot.
+    const soClose = (f, p) => f && !yes(f) && f.distance_m != null && f.distance_m <= Math.max((p.radius_m || 25) * 4, 60);
+
+    // Step 4 of each photo: every team's picture, closest first; distances revealed from farthest to closest.
+    async function howClose(p, level) {
+      const rows = teams.map((t) => ({ t, f: answer(t, p) })).filter((r) => r.f && r.f.distance_m != null).sort((a, b) => a.f.distance_m - b.f.distance_m);
+      if (!rows.length) return;
+      $('#rvSub').textContent = 'How close did everyone get?';
+      $('#rvRound').innerHTML = `<div class="rnd close">
+        <figure class="rnd-target"><div class="rnd-frame"><img class="rnd-photo" src="${esc(p.image)}" alt=""></div><figcaption><b>#${numOf(p.id)}</b>${p.title ? ' · ' + esc(p.title) : ''} · the real spot</figcaption></figure>
+        <div class="rnd-answers" style="--n:${rows.length}">${rows.map(({ t, f }, k) => `
+          <div class="ans ${yes(f) ? 'yes' : 'no'}" data-t="${esc(t.id)}" style="--c:${esc(t.color)};animation-delay:${k * 0.15}s">
+            <div class="ans-h">${esc(t.name)}</div>
+            <div class="ans-pic">${proof(f) ? `<img src="${esc(proof(f))}" alt="">` : '<div class="ans-nopic">No picture</div>'}<div class="ans-badge">${yes(f) ? '✓' : '✕'}</div></div>
+            <div class="ans-dist">?</div>
+          </div>`).join('')}</div></div>`;
+      Sound.chime();
+      await pause(2600);
+      for (const { t, f } of [...rows].reverse()) {
+        if (!live() || run.fast) return;
+        const card = o.querySelector(`.rnd.close .ans[data-t="${CSS.escape(t.id)}"]`);
+        card.querySelector('.ans-dist').textContent = dist(f.distance_m).replace('Right there!', 'Right there').replace(' away', '');
+        card.classList.add('shown');
+        if (soClose(f, p)) { card.insertAdjacentHTML('beforeend', '<div class="ans-tag so">So close! 😩</div>'); Sound.buzz(); await pause(2000); }
+        else { Sound.tap(); await pause(1300); }
+      }
+      const best = rows[0], card = o.querySelector(`.rnd.close .ans[data-t="${CSS.escape(best.t.id)}"]`);
+      card.classList.add('closest');
+      card.insertAdjacentHTML('beforeend', '<div class="ans-tag best">🎯 Closest</div>');
+      Sound.ding(level);
+      await pause(3600);
+    }
+
+    // After the last photo, before the winner: miles walked, then a few fun stats, one card at a time.
+    async function byTheNumbers() {
+      title('By the numbers', 'Before we crown a winner…');
+      $('#rvRound').innerHTML = '';
+      Sound.swell(2.6);
+      await pause(3200);
+      const walk = d.walk;
+      if (walk && walk.teams && teams.some((t) => walk.teams[t.id]?.miles > 0)) {
+        if (!live() || run.fast) return;
+        const order = [...teams].sort((a, b) => (walk.teams[a.id]?.miles || 0) - (walk.teams[b.id]?.miles || 0));
+        const most = Math.max(0.01, ...teams.map((t) => walk.teams[t.id]?.miles || 0));
+        title('🥾 Miles walked', 'How far did each team go?');
+        $('#rvRound').innerHTML = `<div class="walk">${order.map((t) => `<div class="walk-row" data-t="${esc(t.id)}" style="--c:${esc(t.color)}"><div class="walk-name">${esc(t.name)}</div><div class="walk-track"><div class="walk-fill"></div></div><div class="walk-mi">–</div></div>`).join('')}
+          <div class="walk-foot" id="walkFoot"></div></div>`;
+        await pause(1800);
+        for (const t of order) {
+          if (!live() || run.fast) return;
+          const mi = walk.teams[t.id]?.miles || 0, row = o.querySelector(`.walk-row[data-t="${CSS.escape(t.id)}"]`);
+          row.classList.add('on');
+          row.querySelector('.walk-fill').style.width = (100 * mi) / most + '%';
+          countUp(row.querySelector('.walk-mi'), mi, 1400 / run.speed, (v) => `${v.toFixed(2)} mi`);
+          Sound.tap();
+          await pause(2000);
+        }
+        const foot = [];
+        if (walk.top) foot.push(`Farthest walker: <b>${esc(walk.top.name)}</b> (${esc(teamOf(walk.top.team_id)?.name || '')}) · ${walk.top.miles.toFixed(2)} mi`);
+        if (walk.total_miles) foot.push(`All together: <b>${walk.total_miles.toFixed(1)} miles</b>`);
+        $('#walkFoot').innerHTML = foot.join('<br>');
+        Sound.ding(2);
+        await pause(4500);
+      }
+      // Fun stats from the answers.
+      const sent = d.finds.filter((f) => f.player_id), right = d.finds.filter(yes);
+      const withD = (arr) => arr.filter((f) => f.distance_m != null && d.photos.some((p) => p.id === f.photo_id));
+      const closest = withD(right).sort((a, b) => a.distance_m - b.distance_m)[0];
+      const miss = withD(d.finds.filter((f) => !yes(f) && f.player_id)).sort((a, b) => a.distance_m - b.distance_m)[0];
+      const first = [...sent].sort((a, b) => a.created_at - b.created_at)[0];
+      const byPerson = {}; sent.forEach((f) => { const k = f.player_name || ''; if (k) byPerson[k] = (byPerson[k] || 0) + 1; });
+      const topP = Object.entries(byPerson).sort((a, b) => b[1] - a[1])[0];
+      const ph = (f) => d.photos.find((p) => p.id === f.photo_id);
+      const tname = (f) => esc(teamOf(f.team_id)?.name || '');
+      const cards = [];
+      cards.push({ icon: '📸', big: `${sent.length}`, cap: `photos sent · <b>${right.length}</b> counted` });
+      if (closest) cards.push({ icon: '🎯', big: dist(closest.distance_m), cap: `Closest shot: <b>${tname(closest)}</b> at #${numOf(closest.photo_id)}${ph(closest)?.title ? ' · ' + esc(ph(closest).title) : ''}`, img: proof(closest), c: teamOf(closest.team_id)?.color });
+      if (miss) cards.push({ icon: '😩', big: dist(miss.distance_m).replace(' away', ''), cap: `So close! <b>${tname(miss)}</b> missed #${numOf(miss.photo_id)}${ph(miss)?.title ? ' · ' + esc(ph(miss).title) : ''} by this much`, img: proof(miss), c: teamOf(miss.team_id)?.color });
+      if (first && d.game.started_at) cards.push({ icon: '⚡', big: `${Math.max(1, Math.round((first.created_at - d.game.started_at) / 60000))} min`, cap: `First photo of the game: <b>${esc(first.player_name || '')}</b> (${tname(first)})`, img: proof(first), c: teamOf(first.team_id)?.color });
+      if (topP && topP[1] > 1) cards.push({ icon: '🏅', big: `${topP[1]}`, cap: `Most photos by one person: <b>${esc(topP[0])}</b>` });
+      for (const c of cards) {
+        if (!live() || run.fast) return;
+        title('By the numbers', '');
+        $('#rvRound').innerHTML = `<div class="rv-stat ${c.img ? 'has-img' : ''}">${c.img ? `<img class="rv-stat-img" src="${esc(c.img)}" alt="" style="border-color:${esc(c.c || '#fff')}">` : ''}<div><div class="rv-stat-icon">${c.icon}</div><div class="rv-stat-big">${c.big}</div><div class="rv-stat-cap">${c.cap}</div></div></div>`;
+        Sound.ding(1);
+        await pause(5000);
+      }
+    }
+    function countUp(el, to, ms, fmt) {
+      const t0 = performance.now();
+      (function step(now) { const k = Math.min(1, (now - t0) / ms), e = 1 - Math.pow(1 - k, 3); el.textContent = fmt(to * e); if (k < 1 && el.isConnected) requestAnimationFrame(step); })(t0);
+    }
+
     // During the photo rounds the scoreboard is compact (room for 5+ teams); full size again for the finish.
     o.classList.toggle('many', teams.length >= 5);
     o.classList.add('rounds');
@@ -838,11 +934,16 @@
           await pause(2800);
         } else await pause(800);
         try { where?.map.remove(); } catch { /* already gone */ }
+        // 4. How close was everyone? Each team's own picture, closest first, distances from farthest to closest.
+        if (live() && !run.fast) await howClose(p, level);
       }
     }
     if (!live()) return;
     // Make sure the bars end on the official scores (also after "Skip").
     teams.forEach((t) => setScore(t.id, t.score));
+    // By the numbers: miles walked, then a few fun stats, before the final reveal.
+    if (!run.fast) await byTheNumbers();
+    if (!live()) return;
     $('#rvRound').innerHTML = '';
     o.classList.remove('rounds');
     o.querySelector('.rv-speed')?.remove();
@@ -855,17 +956,38 @@
       el.style.transition = 'none'; el.style.transform = `translateY(${dy}px)`;
       requestAnimationFrame(() => requestAnimationFrame(() => { el.style.transition = 'transform .9s cubic-bezier(.3,1.2,.4,1)'; el.style.transform = ''; }));
     });
-    ranked.forEach((t, i) => lane(t.id).querySelector('.ln-name').insertAdjacentHTML('afterbegin', `<span class="ln-rank">${i + 1}</span>`));
     await wait(run.fast ? 900 : 2600);
+    if (!live()) return;
+    // Places from last up to second, one at a time; the winner's lane stays a mystery.
+    const PLACE = ['1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th'];
+    if (!run.fast && ranked.length > 1) {
+      o.classList.add('countdown');
+      for (let i = ranked.length - 1; i >= 1; i--) {
+        if (!live()) return;
+        const t = ranked[i], gap = ranked[0].score - t.score;
+        title(`In ${PLACE[i] || (i + 1) + 'th'} place…`, '');
+        Sound.whoosh();
+        await pause(i === 1 ? 2600 : 1800);
+        if (!live()) return;
+        lane(t.id).classList.add('placed');
+        lane(t.id).querySelector('.ln-name').insertAdjacentHTML('afterbegin', `<span class="ln-rank">${i + 1}</span>`);
+        $('#rvSub').innerHTML = `<b style="color:${esc(t.color)}">${esc(t.name)}</b> · ${t.score} point${t.score === 1 ? '' : 's'}${i === 1 && gap <= 2 ? (gap === 0 ? ' · tied on points, but the winner got there first!' : ` · so close! Just ${gap} point${gap === 1 ? '' : 's'} behind`) : ''}`;
+        if (i === 1) Sound.buzz(); else Sound.ding(1);
+        await pause(i === 1 ? 4200 : 2800);
+      }
+    }
+    lane(ranked[0].id).querySelector('.ln-name').insertAdjacentHTML('afterbegin', '<span class="ln-rank">1</span>');
+    ranked.slice(1).forEach((t, k) => { const n = lane(t.id).querySelector('.ln-name'); if (!n.querySelector('.ln-rank')) n.insertAdjacentHTML('afterbegin', `<span class="ln-rank">${k + 2}</span>`); });
     if (!live()) return;
     title('And the winner is…');
     $('#rvRound').innerHTML = '<div class="rv-win"><div class="rv-trophy wait">🥁</div></div>';
-    Sound.swell(4.0);
-    await wait(4100);
+    Sound.swell(5.0);
+    await wait(run.fast ? 2000 : 5200);
     if (!live()) return;
     const w = ranked[0], tie = ranked[1] && ranked[1].score === w.score;
     title(`${w.name} team wins!`, `${w.score} points${tie ? ' · tied, but they got there first' : ''} · ${w.members.join(', ')}`);
     $('#rvTitle').style.color = w.color;
+    o.classList.remove('countdown');
     lane(w.id).classList.add('winner');
     $('#rvRound').innerHTML = `<div class="rv-win"><div class="rv-trophy">🏆</div><div class="rv-wname" style="color:${esc(w.color)}">${esc(w.name)}</div><div class="rv-wpts">${w.score} points · ${w.found} photo${w.found === 1 ? '' : 's'} right</div></div>`;
     $('#rvSkip')?.remove();
