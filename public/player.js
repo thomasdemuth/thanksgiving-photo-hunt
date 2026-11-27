@@ -198,6 +198,7 @@
     if (document.hidden || !navigator.geolocation || !S.token || S.locBusy) return;
     if (S.locDenied && S.perm !== 'prompt' && S.perm !== 'granted') return; // blocked: wait for "Try again" or Settings
     startWatch();
+    if (!S.roughWarned && S.fix && S.fix.acc > 2000 && Date.now() - S.locSince > 20000 && !$('#sheet')) { S.roughWarned = true; showRoughLoc(); }
     const age = S.fix ? Date.now() - S.fix.at : Infinity;
     if (age < 25000) return;
     // Quiet for over a minute and a half: the watch is probably stuck, so start it over.
@@ -214,42 +215,84 @@
   }
 
   // ---------- location help (blocked, or opened inside another app) ----------
-  const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (!/Android/.test(navigator.userAgent) && navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  const inAppBrowser = /FBAN|FBAV|FB_IAB|Instagram|Line\/|MicroMessenger|Snapchat|LinkedInApp|GSA\/|Twitter|; wv\)/i.test(navigator.userAgent);
+  const UA = navigator.userAgent;
+  const isIOS = /iPhone|iPad|iPod/.test(UA) || (!/Android/.test(UA) && navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const inAppBrowser = /FBAN|FBAV|FB_IAB|Instagram|Line\/|MicroMessenger|Snapchat|LinkedInApp|GSA\/|Twitter|; wv\)/i.test(UA);
+  // Which browser app this is, so the steps name the right one in the phone's Settings.
+  const browserApp = isIOS
+    ? (/CriOS/.test(UA) ? 'Chrome' : /FxiOS/.test(UA) ? 'Firefox' : /EdgiOS/.test(UA) ? 'Edge' : /OPiOS|OPT\//.test(UA) ? 'Opera' : /DuckDuckGo/.test(UA) ? 'DuckDuckGo' : 'Safari')
+    : (/SamsungBrowser/.test(UA) ? 'Samsung Internet' : /Firefox/.test(UA) ? 'Firefox' : /EdgA/.test(UA) ? 'Edge' : /OPR\//.test(UA) ? 'Opera' : 'Chrome');
+  const tryAgainStep = '<li>Come back here and tap <b>Try again</b>. The page reloads to check again.</li>';
   function locSteps() {
     if (inAppBrowser) return `<p><b>You opened this inside another app</b>, which can't share your location. Tap <b>⋯</b> or the share button and choose <b>Open in ${isIOS ? 'Safari' : 'Chrome'}</b>, or copy this address into ${isIOS ? 'Safari' : 'Chrome'}:</p>
       <p class="loc-url"><b>${esc(location.host)}</b></p>`;
-    if (isIOS && /CriOS/.test(navigator.userAgent)) return `<ol class="loc-steps"><li>Open the <b>Settings</b> app → <b>Privacy &amp; Security</b> → <b>Location Services</b>. Make sure it's <b>on</b>.</li>
-      <li>In Settings, scroll down to <b>Chrome</b> → <b>Location</b> → <b>While Using the App</b>.</li><li>Come back here and tap <b>Try again</b>.</li></ol>`;
+    // Kids' phones often have location locked by Screen Time, which makes the switches gray.
+    const screenTime = '<li>Switches gray, or still blocked? Check <b>Settings</b> → <b>Screen Time</b> → <b>Content &amp; Privacy Restrictions</b> → <b>Location Services</b> → <b>Allow Changes</b>. A parent may need to do this.</li>';
+    if (isIOS && browserApp !== 'Safari') return `<ol class="loc-steps"><li>Open the <b>Settings</b> app → <b>Privacy &amp; Security</b> → <b>Location Services</b>. Make sure it's <b>on</b>.</li>
+      <li>On that same screen, scroll down to <b>${browserApp}</b> → <b>While Using the App</b>, and turn on <b>Precise Location</b>.</li>
+      ${screenTime}${tryAgainStep}</ol>`;
     if (isIOS) return `<ol class="loc-steps"><li>Open the <b>Settings</b> app → <b>Privacy &amp; Security</b> → <b>Location Services</b>. Make sure it's <b>on</b>.</li>
-      <li>On that same screen, scroll down to <b>Safari Websites</b> and pick <b>While Using the App</b>.</li>
-      <li>Back in Safari, tap <b>aA</b> (or the ☰ icon) next to the web address → <b>Website Settings</b> → <b>Location</b> → <b>Allow</b>.</li>
-      <li>Come back here and tap <b>Try again</b>.</li></ol>`;
+      <li>On that same screen, scroll down to <b>Safari Websites</b>, pick <b>While Using the App</b>, and turn on <b>Precise Location</b>.</li>
+      <li>Back in Safari, tap <b>aA</b> (or the ☰ icon) next to the web address → <b>Website Settings</b> → <b>Location</b> → <b>Allow</b>. If it says <b>Deny</b>, that's the problem.</li>
+      ${screenTime}${tryAgainStep}</ol>`;
     return `<ol class="loc-steps"><li>Swipe down from the top of the screen and make sure <b>Location</b> is <b>on</b>.</li>
       <li>Tap the icon to the left of the web address (⚙ or 🔒) → <b>Permissions</b> → <b>Location</b> → <b>Allow</b>.</li>
-      <li>Come back here and tap <b>Try again</b>.</li></ol>`;
+      <li>Still blocked? The browser itself may not be allowed. Open the <b>Settings</b> app → <b>Apps</b> → <b>${browserApp}</b> → <b>Permissions</b> → <b>Location</b> → <b>Allow only while using the app</b>, and turn on <b>Use precise location</b>.</li>
+      ${tryAgainStep}</ol>`;
   }
   // Ask again from a button press (some phones only show the "Allow?" box after a tap).
-  async function retryLocation(btn, onOk) {
+  // onWaiting runs when location is allowed but the phone hasn't found a spot yet.
+  async function retryLocation(btn, onOk, onWaiting) {
     btn.disabled = true; btn.textContent = 'Checking…';
     try {
       await getFix(12000, 150);
       setLocDenied(false); startWatch(); onOk();
     } catch (e) {
+      if (e && e.code === 1) {
+        // Safari (and sometimes Chrome) keeps saying no for as long as this page stays open, even after
+        // the player fixes it in Settings. A fresh page asks the phone again; we pick up where we left off.
+        try { sessionStorage.setItem('locRetry', '1'); } catch { /* private mode: still reload */ }
+        location.reload();
+        return;
+      }
       btn.disabled = false; btn.textContent = 'Try again';
       const msg = btn.parentElement.querySelector('.loc-msg');
-      if (msg) msg.textContent = e && e.code === 1 ? 'Still blocked. Follow the steps above, then try again.' : 'Location is allowed, but your phone couldn\'t find you yet. Step outside or wait a moment.';
-      if (e && e.code !== 1) { setLocDenied(false); startWatch(); }
+      if (!navigator.geolocation) { if (msg) msg.textContent = `This browser can't share your location. Open this page in ${isIOS ? 'Safari' : 'Chrome'}.`; return; }
+      // Allowed, just no spot yet (indoors, slow GPS): don't hold the player up, the game keeps looking.
+      setLocDenied(false); startWatch();
+      if (onWaiting) onWaiting();
+      else if (msg) msg.textContent = 'Location is allowed, but your phone couldn\'t find you yet. Step outside or wait a moment.';
     }
   }
-  function showLocHelp() {
+  // After "Try again" reloaded the page: check once more and say how it went.
+  function afterLocReload() {
+    let again = false;
+    try { again = sessionStorage.getItem('locRetry') === '1'; sessionStorage.removeItem('locRetry'); } catch { /* ignore */ }
+    if (!again) return;
+    getFix(12000, 150).then(
+      () => toast('#00933c', '<b>📍 Location is on.</b> You\'re all set!'),
+      (e) => { if (e && e.code === 1) showLocHelp('Still blocked. Go through each step above once more, then try again.'); });
+  }
+  // Location is on but only roughly (iPhone "Precise Location" off, or Android without precise location):
+  // photos can't be checked from miles away, so say how to fix it. Once per page.
+  function showRoughLoc() {
+    const km = (S.fix.acc / 1000).toFixed(S.fix.acc < 10000 ? 1 : 0);
+    const how = isIOS
+      ? `Open the <b>Settings</b> app → <b>Privacy &amp; Security</b> → <b>Location Services</b> → <b>${browserApp === 'Safari' ? 'Safari Websites' : browserApp}</b>, and turn on <b>Precise Location</b>.`
+      : `Open the <b>Settings</b> app → <b>Apps</b> → <b>${browserApp}</b> → <b>Permissions</b> → <b>Location</b>, and turn on <b>Use precise location</b>.`;
+    sheet(`<div class="emoji">🎯</div><h2>Your location is too rough</h2>
+      <p class="muted">Your phone is only sharing where you are to within about ${km} km, so your photos can't be checked.</p>
+      <p>${how}</p>
+      <button class="btn-primary btn-big" data-close>OK</button>`);
+  }
+  function showLocHelp(note) {
     const st = locStatus();
     sheet(st === 'searching' && !inAppBrowser
       ? `<div class="emoji">📡</div><h2>Looking for your location…</h2><p class="muted">Location is allowed, but your phone hasn't found you yet. This is normal indoors or between tall buildings. Step outside for a moment.</p>
         <button class="btn-primary btn-big" id="locRetry">Try again</button><p class="loc-msg muted small"></p><button class="btn-big" data-close>Close</button>`
       : `<div class="emoji">📍</div><h2>Turn on location</h2><p class="muted">The game needs your location to check your photos and show your teammates where you are.</p>
         <div class="loc-help">${locSteps()}</div>
-        <button class="btn-primary btn-big" id="locRetry">Try again</button><p class="loc-msg muted small"></p><button class="btn-big" data-close>Not now</button>`);
+        <button class="btn-primary btn-big" id="locRetry">Try again</button><p class="loc-msg muted small">${note ? esc(note) : ''}</p><button class="btn-big" data-close>Not now</button>`);
     $('#sheet').classList.add('tall');
     $('#locRetry').onclick = (ev) => retryLocation(ev.currentTarget, () => { $('#sheet')?.remove(); toast('#00933c', '<b>📍 Location is on.</b> You\'re all set!'); });
   }
@@ -336,7 +379,8 @@
       S.token = r.token; store.set('token', r.token);
       let perm = null;
       try { perm = (await navigator.permissions.query({ name: 'geolocation' })).state; } catch { /* not supported */ }
-      if (inAppBrowser || perm === 'denied' || !navigator.geolocation) showLocBlocked();
+      // Inside another app we still ask: some (the Google app, many QR scanners) can share location.
+      if (perm === 'denied' || !navigator.geolocation) showLocBlocked();
       else if (perm === 'granted') startGame();
       else showLocationAsk();
     } catch (e) {
@@ -373,7 +417,7 @@
         <p class="loc-msg muted small"></p>
         <button class="btn-ghost btn-small" id="locSkip">Skip for now (you can't send photos without it)</button>
       </div>`;
-    $('#locRetry').onclick = (ev) => retryLocation(ev.currentTarget, startGame);
+    $('#locRetry').onclick = (ev) => retryLocation(ev.currentTarget, startGame, startGame);
     $('#locSkip').onclick = startGame;
   }
 
@@ -407,7 +451,7 @@
     go('photos');
     poll();
     S.locSince = Date.now();
-    watchPermission(); startWatch(); locTick();
+    watchPermission(); startWatch(); locTick(); afterLocReload();
     // Check every 4 s, or every 1.5 s in the lobby so everyone's countdown starts together.
     setInterval(() => { if (Date.now() - (S.lastPoll || 0) >= (phase() === 'lobby' ? 2500 : POLL_MS)) poll(); }, 500);
     setInterval(locTick, LOC_MS);
@@ -847,7 +891,7 @@
       ? '<span>📍 <b>Location is off.</b> Teammates can\'t see you and photos can\'t be sent.</span><button class="btn-small">Fix it</button>'
       : '<span>📡 <b>Looking for your location…</b></span><button class="btn-small">Help</button>';
     if (out) el.querySelector('button').onclick = () => { go('map'); setTimeout(() => { if (S.map && S.fix) S.map.fitBounds([...S.data.game.boundary, [S.fix.lat, S.fix.lng]], { padding: [20, 20] }); }, 200); };
-    else if (show) el.querySelector('button').onclick = showLocHelp;
+    else if (show) el.querySelector('button').onclick = () => showLocHelp();
   }
 
   function notes() {
