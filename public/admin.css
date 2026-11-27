@@ -319,3 +319,11 @@ body.admin .tv button.close { min-height: var(--btn-small); }
 body.admin .tv h1 { font-size: 3em; }
 body.admin .tv h2 { display: block; }
 body.admin #upProg:empty { display: none; }
+
+/* View locations: map of the spot and where the picture was taken */
+body.admin .locbox { background: var(--bg, #fff); color: var(--ink, #111); }
+body.admin .locbox .lb-info { color: inherit; }
+body.admin .loc-map { flex: 1; min-height: 240px; border-radius: var(--r-sm); }
+body.admin .loc-key { display: flex; gap: var(--sp-4); flex-wrap: wrap; }
+body.admin .loc-key i { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: var(--sp-1); vertical-align: -1px; border: 2px solid #fff; box-shadow: 0 0 0 1px #0003; }
+body.admin .loc-key .k-spot { background: #1a73e8; }
