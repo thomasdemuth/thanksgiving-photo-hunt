@@ -762,8 +762,8 @@
     d.photos.forEach((p) => { if (teams.some((t) => answer(t, p))) preload(p.image); });
 
     title('The results are in!', 'Let\'s go through every photo…');
-    Sound.swell(2.6);
-    await pause(2800);
+    Sound.swell(3.4);
+    await pause(3600);
     for (const level of [1, 2, 3]) {
       if (!live()) return;
       if (run.fast) break;
@@ -772,7 +772,7 @@
       $('#rvRound').innerHTML = '';
       title(`${DIFF[level]} photos`, `${pts} point${pts === 1 ? '' : 's'} each · ${photos.length ? `${photos.length} photo${photos.length === 1 ? '' : 's'} to check` : 'nobody tried one!'}`);
       Sound.whoosh();
-      await pause(2000);
+      await pause(2800);
       for (const [i, p] of photos.entries()) {
         if (!live()) return;
         if (run.fast) break;
@@ -780,7 +780,7 @@
         $('#rvTitle').textContent = `${DIFF[level]} photos`;
         $('#rvSub').textContent = `Photo ${i + 1} of ${photos.length}`;
         $('#rvRound').innerHTML = `<div class="rnd">
-          <figure class="rnd-target"><img src="${esc(p.image)}" alt=""><figcaption><b>#${numOf(p.id)}</b>${p.title ? ' · ' + esc(p.title) : ''} · ${p.points} pt${p.points === 1 ? '' : 's'}</figcaption></figure>
+          <figure class="rnd-target" id="rndTarget"><div class="rnd-frame"><img src="${esc(p.image)}" alt=""><div class="rnd-map" id="rndMap"></div></div><figcaption><b>#${numOf(p.id)}</b>${p.title ? ' · ' + esc(p.title) : ''} · ${p.points} pt${p.points === 1 ? '' : 's'}</figcaption></figure>
           <div class="rnd-answers" style="--n:${teams.length}">${teams.map((t, k) => {
             const f = answer(t, p), pl = f && playerOf(f.player_id);
             const img = f && (f.proof_key ? `/img/${f.proof_key}` : null);
@@ -791,8 +791,11 @@
               <div class="ans-by">${f ? esc(pl?.name || 'Judge') : '&nbsp;'}</div>
             </div>`;
           }).join('')}</div></div>`;
+        // Build the map now (hidden) so its tiles load while the answers are stamped.
+        // Never let a map problem stop the show: without it, the photo just stays up.
+        let where = null; try { where = spotMap(p, teams, answer); } catch { $('#rndMap')?.remove(); }
         Sound.chime();
-        await pause(2200);
+        await pause(3000);
         // 2. Stamp each answer: green check or red X, then add the points.
         for (const t of teams) {
           const f = answer(t, p); if (!f) continue;
@@ -802,9 +805,24 @@
           card.classList.add(ok ? 'yes' : 'no');
           card.querySelector('.ans-stamp').innerHTML = ok ? `<span>✓</span><b>+${p.points}</b>` : '<span>✕</span>';
           if (ok) { Sound.ding(level); setScore(t.id, score[t.id] + p.points); } else Sound.buzz();
-          await pause(700);
+          await pause(1000);
         }
-        await pause(1500);
+        await pause(1200);
+        // 3. Where it really was: the map fades in over the photo, then each team's spot drops in.
+        if (where && live() && !run.fast) {
+          $('#rvSub').textContent = 'Here\'s where it was';
+          $('#rndTarget').classList.add('map');
+          where.map.invalidateSize(); where.fit();
+          Sound.whoosh();
+          await pause(1600);
+          for (const drop of where.drops) {
+            if (!live() || run.fast) break;
+            drop(); Sound.tap();
+            await pause(900);
+          }
+          await pause(2800);
+        } else await pause(800);
+        try { where?.map.remove(); } catch { /* already gone */ }
       }
     }
     if (!live()) return;
@@ -822,12 +840,12 @@
       requestAnimationFrame(() => requestAnimationFrame(() => { el.style.transition = 'transform .9s cubic-bezier(.3,1.2,.4,1)'; el.style.transform = ''; }));
     });
     ranked.forEach((t, i) => lane(t.id).querySelector('.ln-name').insertAdjacentHTML('afterbegin', `<span class="ln-rank">${i + 1}</span>`));
-    await wait(run.fast ? 900 : 1800);
+    await wait(run.fast ? 900 : 2600);
     if (!live()) return;
     title('And the winner is…');
     $('#rvRound').innerHTML = '<div class="rv-win"><div class="rv-trophy wait">🥁</div></div>';
-    Sound.swell(3.0);
-    await wait(3100);
+    Sound.swell(4.0);
+    await wait(4100);
     if (!live()) return;
     const w = ranked[0], tie = ranked[1] && ranked[1].score === w.score;
     title(`${w.name} team wins!`, `${w.score} points${tie ? ' · tied, but they got there first' : ''} · ${w.members.join(', ')}`);
@@ -837,6 +855,34 @@
     $('#rvSkip')?.remove();
     Sound.crash(); Sound.fanfare();
     confetti();
+  }
+  // The "here's where it was" map for one photo in the results show: the real spot with its circle,
+  // and a dot for each team where they took their picture (added one at a time with drops()).
+  // Built hidden, so the tiles load while the answers are stamped. Null if the photo has no location.
+  function spotMap(p, teams, answer) {
+    const el = $('#rndMap');
+    if (!el || p.lat == null || p.lng == null) return null;
+    const map = L.map(el, { zoomControl: false, dragging: false, scrollWheelZoom: false, doubleClickZoom: false, boxZoom: false, keyboard: false, touchZoom: false, zoomSnap: 0.25 });
+    addBaseMap(map);
+    const spot = [p.lat, p.lng];
+    L.circle(spot, { radius: p.radius_m || 25, color: '#fff', weight: 3, dashArray: '6 6', fillColor: '#00933c', fillOpacity: 0.3 }).addTo(map);
+    L.marker(spot, { icon: L.divIcon({ className: 'rv-pin', html: '<span>📍</span>', iconSize: [40, 40], iconAnchor: [20, 38] }), zIndexOffset: 1000 }).addTo(map);
+    const pts = [spot];
+    const drops = [];
+    teams.forEach((t) => {
+      const f = answer(t, p);
+      if (!f || f.lat == null || f.lng == null) return;
+      const at = [f.lat, f.lng];
+      pts.push(at);
+      drops.push(() => {
+        L.polyline([at, spot], { color: t.color, weight: 4, dashArray: '2 9', opacity: 0.95 }).addTo(map);
+        L.circleMarker(at, { radius: 12, color: '#fff', weight: 3, fillColor: t.color, fillOpacity: 1, className: 'rv-dot' }).addTo(map)
+          .bindTooltip(`${esc(t.name)} · ${f.distance_m != null ? feet(f.distance_m) : ''}`, { permanent: true, direction: 'top', offset: [0, -12], className: 'rv-tip' });
+      });
+    });
+    const fit = () => pts.length > 1 ? map.fitBounds(pts, { padding: [50, 50], maxZoom: 18 }) : map.setView(spot, 18);
+    fit();
+    return { map, fit, drops };
   }
   function confetti() {
     const c = document.createElement('canvas');

@@ -396,15 +396,24 @@ async function player(request, env, url) {
       const base = { id: t.id, name: t.name, color: t.color, members: hidden ? [] : t.members, players: hidden ? 0 : t.players, submitted: spoil ? t.submitted : t.sent };
       return spoil ? { ...base, score: t.score, found: t.found, by_diff: t.by_diff, reached_at: t.reached_at } : { ...base, score: 0, found: 0, reached_at: 0 };
     });
-    // Hand-added finds are always a yes, so they stay hidden with the rest of the results. Never any find locations.
+    // Hand-added finds are always a yes, so they stay hidden with the rest of the results.
+    // Find locations only after the reveal, for the "here's where it was" map in the results show.
+    const shown = s.game.revealed;
     const finds = (spoil ? s.finds : s.finds.filter((f) => f.player_id)).map((f) => ({
       id: f.id, photo_id: f.photo_id, team_id: f.team_id, player_id: f.player_id, player_name: f.player_name,
       created_at: f.created_at, seq: f.seq, proof_key: f.proof_key,
       ...(spoil ? { status: f.status, distance_m: f.distance_m } : {}),
+      ...(shown ? { lat: f.lat, lng: f.lng } : {}),
     }));
+    // Where each photo really was: only once the results are revealed.
+    let photos = s.photos;
+    if (shown) {
+      const at = Object.fromEntries((await env.DB.prepare('SELECT id, lat, lng, radius_m FROM photos WHERE game_id = ? AND lat IS NOT NULL').bind(game.id).all()).results.map((r) => [r.id, r]));
+      photos = s.photos.map((p) => at[p.id] ? { ...p, lat: at[p.id].lat, lng: at[p.id].lng, radius_m: at[p.id].radius_m } : p);
+    }
     const spots = tv.spots ? (await env.DB.prepare('SELECT id, lat, lng, radius_m FROM photos WHERE game_id = ? AND lat IS NOT NULL').bind(game.id).all()).results : [];
     const cmd = game.tv_cmd ? { cmd: game.tv_cmd, at: game.tv_cmd_at } : null;
-    return json({ game: { ...s.game, cmd }, tv, teams, photos: s.photos, finds, players, spots, pings, v, now: now() });
+    return json({ game: { ...s.game, cmd }, tv, teams, photos, finds, players, spots, pings, v, now: now() });
   }
 
   // Look for players with this name, for "Is this you, Mike on Blue team?"
