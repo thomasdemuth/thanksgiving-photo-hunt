@@ -1146,10 +1146,12 @@
     $('#pCount').textContent = players.length;
     const offline = (p) => !p.last_seen_at || A.d.now - p.last_seen_at > 2 * 60000;
     const isOut = (p) => game.status === 'live' && p.last_lat != null && !insideArea(p.last_lat, p.last_lng, game.boundary);
+    // What the phone itself reported (browser, permission, error code), to help fix it from across the room.
+    const whyNote = (p) => p.loc_why ? `<div class="small muted loc-why">${esc(p.loc_why)}</div>` : '';
     // Location status per phone, so problems show up in the lobby before the start.
     const locTag = (p) => offline(p) ? `<span class="small muted">app closed ${p.last_seen_at ? ago(p.last_seen_at) : ''}</span>`
-      : p.loc_state === 'off' ? '<span class="loc-tag bad">location off</span>'
-      : !p.loc_at ? '<span class="loc-tag warn">no location yet</span>'
+      : p.loc_state === 'off' ? `<span class="loc-tag bad">location off</span>${whyNote(p)}`
+      : !p.loc_at ? `<span class="loc-tag warn">no location yet</span>${whyNote(p)}`
       : A.d.now - p.loc_at > 3 * 60000 ? `<span class="loc-tag warn">location ${ago(p.loc_at)}</span>`
       : isOut(p) ? '<span class="loc-tag bad">outside the area</span>'
       : '<span class="small muted">location ok</span>';

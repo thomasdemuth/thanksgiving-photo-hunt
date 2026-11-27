@@ -87,17 +87,22 @@
         if (!best || fix.acc <= best.acc) best = fix;
         gotFix(fix);
         if (fix.acc <= goodEnough) done();
-      }, (err) => { if (err.code === 1) setLocDenied(true); done(err); },
+      }, (err) => { noteLocErr(err); if (err.code === 1) setLocDenied(true); done(err); },
       { enableHighAccuracy: true, maximumAge: 5000, timeout: timeoutMs });
       const timer = setTimeout(() => done(), timeoutMs);
     });
+  }
+
+  // The last thing the phone said when it couldn't give a location, for the "details" line and the host.
+  function noteLocErr(err) {
+    S.locErr = { code: err && err.code, msg: String((err && err.message) || '').slice(0, 60), at: Date.now() };
   }
 
   const posFix = (p) => ({ lat: p.coords.latitude, lng: p.coords.longitude, acc: Math.round(p.coords.accuracy), at: Date.now() });
 
   function gotFix(fix) {
     const wasDenied = S.locDenied;
-    S.fix = fix; S.locDenied = false; S.lowAcc = false;
+    S.fix = fix; S.locDenied = false; S.lowAcc = false; S.locErr = null;
     const gid = S.data?.game?.id;
     // Walked trail, only while the game is on. Skip fuzzy fixes so the line doesn't zigzag.
     if (gid && S.data.game.status === 'live' && fix.acc <= 50) {
@@ -148,7 +153,7 @@
     S.watchAt = Date.now();
     S.watch = navigator.geolocation.watchPosition(
       (p) => gotFix(posFix(p)),
-      (err) => { if (err.code === 1) setLocDenied(true); }, // 2 and 3 (no GPS yet / too slow): keep waiting
+      (err) => { noteLocErr(err); if (err.code === 1) setLocDenied(true); }, // 2 and 3 (no GPS yet / too slow): keep waiting
       { enableHighAccuracy: true, maximumAge: 10000, timeout: 30000 });
   }
   function stopWatch() {
@@ -207,7 +212,7 @@
     navigator.geolocation.getCurrentPosition(
       (p) => { S.locBusy = false; gotFix(posFix(p)); },
       (err) => {
-        S.locBusy = false;
+        S.locBusy = false; noteLocErr(err);
         if (err.code === 1) setLocDenied(true);
         else S.lowAcc = !S.lowAcc; // no GPS between tall buildings: try the rougher wifi/cell location next time
       },
@@ -221,7 +226,26 @@
   // Which browser app this is, so the steps name the right one in the phone's Settings.
   const browserApp = isIOS
     ? (/CriOS/.test(UA) ? 'Chrome' : /FxiOS/.test(UA) ? 'Firefox' : /EdgiOS/.test(UA) ? 'Edge' : /OPiOS|OPT\//.test(UA) ? 'Opera' : /DuckDuckGo/.test(UA) ? 'DuckDuckGo' : 'Safari')
-    : (/SamsungBrowser/.test(UA) ? 'Samsung Internet' : /Firefox/.test(UA) ? 'Firefox' : /EdgA/.test(UA) ? 'Edge' : /OPR\//.test(UA) ? 'Opera' : 'Chrome');
+    : (/SamsungBrowser/.test(UA) ? 'Samsung Internet' : /Firefox/.test(UA) ? 'Firefox' : /EdgA?\//.test(UA) ? 'Edge' : /OPR\//.test(UA) ? 'Opera'
+      : /Safari/.test(UA) && !/Chrome|Chromium|Android/.test(UA) ? 'Safari' : 'Chrome');
+  const isDesktop = !isIOS && !/Android|Mobile/.test(UA);
+  const deviceName = () => {
+    const ios = UA.match(/OS (\d+)_(\d+)/), and = UA.match(/Android ([\d.]+)/);
+    if (isIOS) return `${/iPad/.test(UA) || navigator.platform === 'MacIntel' ? 'iPad' : 'iPhone'}${ios ? ` iOS ${ios[1]}.${ios[2]}` : ''}`;
+    if (and) return `Android ${and[1]}`;
+    return /Mac/.test(UA) ? 'Mac' : /Windows/.test(UA) ? 'Windows' : 'computer';
+  };
+  const ERR_NAME = { 1: 'blocked', 2: 'no position', 3: 'too slow' };
+  // One short line saying exactly what the phone reported. Shown in the help and sent to the host's player list.
+  function locWhy() {
+    const parts = [`${browserApp}${inAppBrowser ? ' (inside another app)' : ''} on ${deviceName()}`];
+    if (!navigator.geolocation) parts.push('no location support');
+    if (S.perm) parts.push(`permission ${S.perm}`);
+    if (S.locErr) parts.push(`error ${S.locErr.code} ${ERR_NAME[S.locErr.code] || ''}${S.locErr.msg ? ` (${S.locErr.msg})` : ''}`.trim());
+    if (S.fix) parts.push(`last fix ±${S.fix.acc} m`);
+    return parts.join(' · ').slice(0, 200);
+  }
+  const whyLine = () => `<p class="small muted loc-why">Details for the host: ${esc(locWhy())}</p>`;
   const tryAgainStep = '<li>Come back here and tap <b>Try again</b>. The page reloads to check again.</li>';
   function locSteps() {
     if (inAppBrowser) return `<p><b>You opened this inside another app</b>, which can't share your location. Tap <b>⋯</b> or the share button and choose <b>Open in ${isIOS ? 'Safari' : 'Chrome'}</b>, or copy this address into ${isIOS ? 'Safari' : 'Chrome'}:</p>
@@ -235,6 +259,11 @@
       <li>On that same screen, scroll down to <b>Safari Websites</b>, pick <b>While Using the App</b>, and turn on <b>Precise Location</b>.</li>
       <li>Back in Safari, tap <b>aA</b> (or the ☰ icon) next to the web address → <b>Website Settings</b> → <b>Location</b> → <b>Allow</b>. If it says <b>Deny</b>, that's the problem.</li>
       ${screenTime}${tryAgainStep}</ol>`;
+    if (isDesktop) return `<p>This game is meant for a phone. Scan the QR code with your phone's camera instead. On a computer:</p><ol class="loc-steps">
+      ${/Mac/.test(UA) ? `<li>Open <b>System Settings</b> → <b>Privacy &amp; Security</b> → <b>Location Services</b>. Turn it on, and turn on <b>${browserApp}</b> in the list.</li>`
+        : `<li>Open <b>Settings</b> → <b>Privacy &amp; security</b> → <b>Location</b>. Turn on <b>Location services</b>, <b>Let apps access your location</b> and <b>Let desktop apps access your location</b>.</li>`}
+      <li>Click the icon to the left of the web address → <b>Location</b> → <b>Allow</b>.</li>
+      ${tryAgainStep}</ol>`;
     return `<ol class="loc-steps"><li>Swipe down from the top of the screen and make sure <b>Location</b> is <b>on</b>.</li>
       <li>Tap the icon to the left of the web address (⚙ or 🔒) → <b>Permissions</b> → <b>Location</b> → <b>Allow</b>.</li>
       <li>Still blocked? The browser itself may not be allowed. Open the <b>Settings</b> app → <b>Apps</b> → <b>${browserApp}</b> → <b>Permissions</b> → <b>Location</b> → <b>Allow only while using the app</b>, and turn on <b>Use precise location</b>.</li>
@@ -289,10 +318,10 @@
     const st = locStatus();
     sheet(st === 'searching' && !inAppBrowser
       ? `<div class="emoji">📡</div><h2>Looking for your location…</h2><p class="muted">Location is allowed, but your phone hasn't found you yet. This is normal indoors or between tall buildings. Step outside for a moment.</p>
-        <button class="btn-primary btn-big" id="locRetry">Try again</button><p class="loc-msg muted small"></p><button class="btn-big" data-close>Close</button>`
+        <button class="btn-primary btn-big" id="locRetry">Try again</button><p class="loc-msg muted small"></p><button class="btn-big" data-close>Close</button>${whyLine()}`
       : `<div class="emoji">📍</div><h2>Turn on location</h2><p class="muted">The game needs your location to check your photos and show your teammates where you are.</p>
         <div class="loc-help">${locSteps()}</div>
-        <button class="btn-primary btn-big" id="locRetry">Try again</button><p class="loc-msg muted small">${note ? esc(note) : ''}</p><button class="btn-big" data-close>Not now</button>`);
+        <button class="btn-primary btn-big" id="locRetry">Try again</button><p class="loc-msg muted small">${note ? esc(note) : ''}</p><button class="btn-big" data-close>Not now</button>${whyLine()}`);
     $('#sheet').classList.add('tall');
     $('#locRetry').onclick = (ev) => retryLocation(ev.currentTarget, () => { $('#sheet')?.remove(); toast('#00933c', '<b>📍 Location is on.</b> You\'re all set!'); });
   }
@@ -416,6 +445,7 @@
         <button class="btn-primary btn-big" id="locRetry">Try again</button>
         <p class="loc-msg muted small"></p>
         <button class="btn-ghost btn-small" id="locSkip">Skip for now (you can't send photos without it)</button>
+        ${whyLine()}
       </div>`;
     $('#locRetry').onclick = (ev) => retryLocation(ev.currentTarget, startGame, startGame);
     $('#locSkip').onclick = startGame;
@@ -486,6 +516,7 @@
     try {
       const body = S.fix && Date.now() - S.fix.at < 180000 ? { lat: S.fix.lat, lng: S.fix.lng, acc: S.fix.acc } : {};
       body.loc = locStatus();
+      if (body.loc !== 'ok') body.why = locWhy();
       if (S.data && S.v) body.v = S.v; // "I already have this version"
       const d = await api('/api/poll', body, { timeout: 12000 });
       S.offset = d.now - Date.now();

@@ -495,6 +495,12 @@ async function player(request, env, url) {
       .bind(game.id, hidden || !me.team_id ? '-' : me.team_id, me.id));
     const res = await env.DB.batch(stmts);
     const mates = res[res.length - 1].results;
+    // Why this phone has no location (browser, permission, error), for the host's player list.
+    // Separate and forgiving, so the poll still works if migration 013 hasn't been applied yet.
+    const why = locState === 'ok' ? null : typeof body.why === 'string' ? body.why.slice(0, 200) : undefined;
+    if (why !== undefined && why !== (me.loc_why ?? null)) {
+      await env.DB.prepare('UPDATE players SET loc_why = ? WHERE id = ?').bind(why, me.id).run().catch(() => {});
+    }
     const v = tag(game);
     if (body.v === v) return json({ same: true, v, mates, now: now() });
     const s = await gameState(env, game);
@@ -646,6 +652,10 @@ async function admin(request, env, url, who) {
       env.DB.prepare('SELECT id, team_id, name, last_lat, last_lng, last_accuracy, last_seen_at, loc_state, loc_at, adult FROM players WHERE game_id = ? AND kicked_at IS NULL ORDER BY created_at').bind(game.id),
       env.DB.prepare("SELECT * FROM finds WHERE game_id = ? AND status != 'replaced' ORDER BY created_at DESC").bind(game.id),
     ]);
+    // Location details per phone (migration 013). Skipped quietly if the column isn't there yet.
+    const whys = await env.DB.prepare('SELECT id, loc_why FROM players WHERE game_id = ? AND loc_why IS NOT NULL').bind(game.id).all().then((r) => r.results, () => []);
+    const whyOf = Object.fromEntries(whys.map((r) => [r.id, r.loc_why]));
+    for (const p of players.results) p.loc_why = whyOf[p.id] || null;
     const s = await gameState(env, game);
     return json({
       game: { ...game, status: effectiveStatus(game), boundary: s.game.boundary, home: s.game.home, announce: s.game.announce, tv: tvSettings(game) },
